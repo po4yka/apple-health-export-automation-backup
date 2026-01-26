@@ -1,9 +1,36 @@
 [project]
 name = "health-ingest"
 version = "0.1.0"
-description = "Apple Health data ingestion from MQTT to InfluxDB"
+description = "Apple Health data ingestion from MQTT to InfluxDB with Grafana visualization"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.13"
+authors = [
+    { name = "", email = "" }
+]
+keywords = [
+    "apple-health",
+    "health-data",
+    "mqtt",
+    "influxdb",
+    "grafana",
+    "time-series",
+    "health-tracking",
+    "quantified-self",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
 dependencies = [
     "paho-mqtt>=2.1",
     "influxdb-client[async]>=1.40",
@@ -13,6 +40,11 @@ dependencies = [
     "anthropic>=0.40",
     "httpx>=0.27",
 ]
+
+[project.urls]
+Homepage = "https://github.com/po4yka/apple-health-export-automation-backup"
+Repository = "https://github.com/po4yka/apple-health-export-automation-backup"
+Issues = "https://github.com/po4yka/apple-health-export-automation-backup/issues"
 
 [dependency-groups]
 dev = [

@@ -1,35 +1,73 @@
+# =============================================================================
+# Apple Health Backup & Analysis System - Docker Compose Stack
+# =============================================================================
+# Services:
+#   - health-ingest: MQTT subscriber that transforms and writes to InfluxDB
+#   - influxdb: Time-series database for storing health metrics
+#   - grafana: Visualization dashboards
+#
+# Usage:
+#   Start:   docker compose up -d
+#   Stop:    docker compose down
+#   Logs:    docker compose logs -f
+#   Rebuild: docker compose build --no-cache
+#
+# Ports:
+#   - 8087: InfluxDB (http://localhost:8087)
+#   - 3001: Grafana  (http://localhost:3001)
+# =============================================================================
+
 services:
+  # ---------------------------------------------------------------------------
+  # Health Data Ingestion Service
+  # ---------------------------------------------------------------------------
+  # Subscribes to MQTT topics, transforms health data from Health Auto Export
+  # iOS app, and writes to InfluxDB in batches.
   health-ingest:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: health-ingest
     depends_on:
       influxdb:
         condition: service_healthy
     environment:
+      # MQTT settings - connects to external broker (e.g., existing Mosquitto)
       - MQTT_HOST=${MQTT_HOST:-192.168.1.175}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - MQTT_USERNAME=${MQTT_USERNAME:-}
       - MQTT_PASSWORD=${MQTT_PASSWORD:-}
       - MQTT_TOPIC=${MQTT_TOPIC:-health/export/#}
+      # InfluxDB settings - connects to influxdb service
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
       - INFLUXDB_ORG=${INFLUXDB_ORG:-health}
       - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-apple_health}
+      # Application settings
       - APP_LOG_LEVEL=${APP_LOG_LEVEL:-INFO}
       - APP_LOG_FORMAT=${APP_LOG_FORMAT:-json}
+      - APP_DEFAULT_SOURCE=${APP_DEFAULT_SOURCE:-health_auto_export}
     restart: unless-stopped
     networks:
       - health-network
+    # Note: No ports exposed - this service only connects outbound to MQTT and InfluxDB
 
+  # ---------------------------------------------------------------------------
+  # InfluxDB - Time-Series Database
+  # ---------------------------------------------------------------------------
+  # Stores all health metrics with infinite retention by default.
+  # Web UI available at http://localhost:8087
   influxdb:
     image: influxdb:2.7
     container_name: health-influxdb
     ports:
-      - "8087:8086"
+      - "8087:8086"  # Mapped to 8087 to avoid conflicts with other services
     volumes:
+      # Data persistence on NVMe for better performance
       - /mnt/nvme/health/influxdb:/var/lib/influxdb2
       - /mnt/nvme/health/influxdb-config:/etc/influxdb2
     environment:
+      # Initial setup configuration (only used on first run)
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_ADMIN_USER:-admin}
       - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}
@@ -42,23 +80,38 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks:
       - health-network
 
+  # ---------------------------------------------------------------------------
+  # Grafana - Visualization Dashboards
+  # ---------------------------------------------------------------------------
+  # Pre-configured with InfluxDB datasource and health overview dashboard.
+  # Web UI available at http://localhost:3001
   grafana:
     image: grafana/grafana:latest
     container_name: health-grafana
     ports:
-      - "3001:3000"
+      - "3001:3000"  # Mapped to 3001 to avoid conflicts (e.g., with Karakeep)
     volumes:
+      # Data persistence
       - /mnt/nvme/health/grafana:/var/lib/grafana
+      # Provisioning configuration (datasources and dashboards)
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
+      # Admin credentials
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      # Security settings
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      # Server settings (for reverse proxy / Cloudflare Tunnel)
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3001}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
+      # InfluxDB token for provisioned datasource
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
     depends_on:
       influxdb:
         condition: service_healthy
@@ -66,6 +119,10 @@ services:
     networks:
       - health-network
 
+# =============================================================================
+# Networks
+# =============================================================================
 networks:
   health-network:
+    name: health-network
     driver: bridge
