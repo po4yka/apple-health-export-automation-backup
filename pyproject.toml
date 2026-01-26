@@ -57,6 +57,7 @@ dev = [
 health-ingest = "health_ingest.main:run"
 health-check = "health_ingest.main:health_check_cli"
 health-report = "health_ingest.reports.weekly:run_report"
+health-report-send = "health_ingest.reports.weekly:run_report_and_send"
 health-archive-replay = "health_ingest.cli:archive_replay"
 health-archive = "health_ingest.cli:archive_manage"
 health-dlq-inspect = "health_ingest.cli:dlq_inspect"
@@ -79,6 +80,7 @@ ignore = ["N815", "SIM105"]  # N815: Allow camelCase for Pydantic JSON aliases; 
 
 [tool.ruff.lint.per-file-ignores]
 "src/health_ingest/reports/weekly.py" = ["E501"]  # Long Flux queries
+"src/health_ingest/reports/rules.py" = ["E501"]  # Rule content strings
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
