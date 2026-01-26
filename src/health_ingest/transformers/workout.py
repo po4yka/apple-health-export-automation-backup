@@ -30,10 +30,13 @@ class WorkoutTransformer(BaseTransformer):
             try:
                 workout = WorkoutMetric.model_validate(item)
 
+                workout_type = self._sanitize_tag(
+                    self._normalize_workout_type(workout.name)
+                )
                 point = (
                     Point(self.measurement)
                     .tag("source", self._get_source(item))
-                    .tag("workout_type", self._normalize_workout_type(workout.name))
+                    .tag("workout_type", workout_type)
                 )
 
                 # Calculate duration if not provided
@@ -59,7 +62,8 @@ class WorkoutTransformer(BaseTransformer):
                 point.time(workout.start)
                 points.append(point)
 
-            except Exception:
+            except Exception as e:
+                self._log_transform_error(e, item, context="workout_transform")
                 continue
 
         return points

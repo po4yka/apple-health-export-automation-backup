@@ -99,7 +99,8 @@ class VitalsTransformer(BaseTransformer):
 
                 points.append(point)
 
-            except Exception:
+            except Exception as e:
+                self._log_transform_error(e, item)
                 continue
 
         return points
