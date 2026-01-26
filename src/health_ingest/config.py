@@ -177,6 +177,53 @@ class DLQSettings(BaseSettings):
         return v
 
 
+class ClawdbotSettings(BaseSettings):
+    """Clawdbot gateway settings for report delivery."""
+
+    model_config = SettingsConfigDict(env_prefix="CLAWDBOT_")
+
+    enabled: bool = Field(default=True, description="Enable Telegram delivery via Clawdbot")
+    gateway_url: str = Field(
+        default="http://clawdbot-gateway:18789",
+        description="Clawdbot gateway URL",
+    )
+    hooks_token: str | None = Field(default=None, description="Hooks API authentication token")
+    telegram_user_id: int = Field(default=0, description="Target Telegram user ID")
+    max_retries: int = Field(default=3, description="Maximum delivery retries")
+    retry_delay_seconds: float = Field(default=5.0, description="Initial retry delay in seconds")
+
+    @field_validator("max_retries")
+    @classmethod
+    def validate_max_retries(cls, v: int) -> int:
+        """Validate max retries is reasonable."""
+        if v < 1:
+            raise ValueError(f"Max retries must be at least 1, got {v}")
+        if v > 10:
+            raise ValueError(f"Max retries too high (max 10), got {v}")
+        return v
+
+
+class InsightSettings(BaseSettings):
+    """AI insight generation settings."""
+
+    model_config = SettingsConfigDict(env_prefix="INSIGHT_")
+
+    prefer_ai: bool = Field(default=True, description="Prefer AI over rules when available")
+    max_insights: int = Field(default=5, description="Maximum insights to include in report")
+    include_reasoning: bool = Field(default=True, description="Include reasoning in insights")
+    ai_timeout_seconds: float = Field(default=30.0, description="AI API timeout in seconds")
+
+    @field_validator("max_insights")
+    @classmethod
+    def validate_max_insights(cls, v: int) -> int:
+        """Validate max insights is reasonable."""
+        if v < 1:
+            raise ValueError(f"Max insights must be at least 1, got {v}")
+        if v > 10:
+            raise ValueError(f"Max insights too high (max 10), got {v}")
+        return v
+
+
 class AppSettings(BaseSettings):
     """Application settings."""
 
@@ -219,6 +266,8 @@ class Settings(BaseSettings):
     archive: ArchiveSettings = Field(default_factory=ArchiveSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     dlq: DLQSettings = Field(default_factory=DLQSettings)
+    clawdbot: ClawdbotSettings = Field(default_factory=ClawdbotSettings)
+    insight: InsightSettings = Field(default_factory=InsightSettings)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -231,6 +280,8 @@ class Settings(BaseSettings):
             archive=ArchiveSettings(),
             dedup=DedupSettings(),
             dlq=DLQSettings(),
+            clawdbot=ClawdbotSettings(),
+            insight=InsightSettings(),
         )
 
 

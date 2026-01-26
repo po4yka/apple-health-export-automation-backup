@@ -1,5 +1,6 @@
 """Weekly health report generator using Claude API."""
 
+import argparse
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -8,7 +9,11 @@ import anthropic
 import structlog
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 
-from ..config import AnthropicSettings, InfluxDBSettings
+from ..config import AnthropicSettings, InfluxDBSettings, get_settings
+from .delivery import ClawdbotDelivery
+from .formatter import TelegramFormatter
+from .insights import InsightEngine
+from .models import DeliveryResult, PrivacySafeMetrics
 
 logger = structlog.get_logger(__name__)
 
@@ -456,10 +461,165 @@ Generated on {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}
         return report.strip()
 
 
+def convert_to_privacy_safe(
+    metrics: WeeklyMetrics,
+    previous_metrics: WeeklyMetrics | None = None,
+) -> PrivacySafeMetrics:
+    """Convert WeeklyMetrics to PrivacySafeMetrics.
+
+    Args:
+        metrics: Current week's metrics.
+        previous_metrics: Previous week's metrics for HRV comparison.
+
+    Returns:
+        Privacy-safe aggregated metrics.
+    """
+    # Calculate HRV change if we have previous data
+    hrv_change_pct = None
+    if previous_metrics and previous_metrics.avg_hrv and metrics.avg_hrv:
+        hrv_change_pct = (
+            (metrics.avg_hrv - previous_metrics.avg_hrv) / previous_metrics.avg_hrv * 100
+        )
+
+    return PrivacySafeMetrics(
+        # Activity
+        avg_daily_steps=int(metrics.avg_daily_steps),
+        steps_change_pct=metrics.steps_change_pct,
+        total_exercise_min=int(metrics.total_exercise_minutes),
+        exercise_change_pct=metrics.exercise_change_pct,
+        total_active_calories=int(metrics.total_active_calories),
+        # Heart
+        avg_resting_hr=metrics.avg_resting_hr,
+        resting_hr_range=(
+            (metrics.min_resting_hr, metrics.max_resting_hr)
+            if metrics.min_resting_hr and metrics.max_resting_hr
+            else None
+        ),
+        avg_hrv=metrics.avg_hrv,
+        hrv_change_pct=hrv_change_pct,
+        # Sleep
+        avg_duration_hours=(
+            metrics.avg_sleep_duration / 60 if metrics.avg_sleep_duration else None
+        ),
+        avg_quality_pct=metrics.avg_sleep_quality,
+        sleep_change_pct=metrics.sleep_change_pct,
+        avg_deep_sleep_min=metrics.avg_deep_sleep,
+        avg_rem_sleep_min=metrics.avg_rem_sleep,
+        # Workouts
+        workout_count=metrics.workout_count,
+        total_workout_duration_min=int(metrics.total_workout_duration),
+        workout_types=metrics.workout_types or {},
+        # Body
+        weight_kg=metrics.latest_weight,
+        weight_change_kg=metrics.weight_change,
+    )
+
+
+async def generate_and_send_report(
+    dry_run: bool = False,
+    stdout: bool = False,
+) -> DeliveryResult | None:
+    """Generate weekly report with insights and optionally send via Telegram.
+
+    Args:
+        dry_run: If True, generate but don't send.
+        stdout: If True, print report to stdout.
+
+    Returns:
+        DeliveryResult if sent, None if dry_run or delivery disabled.
+    """
+    settings = get_settings()
+
+    generator = WeeklyReportGenerator(
+        influxdb_settings=settings.influxdb,
+        anthropic_settings=settings.anthropic,
+    )
+
+    await generator.connect()
+
+    try:
+        # Calculate date range
+        end_date = datetime.now(UTC)
+        start_date = end_date - timedelta(days=7)
+        prev_start = start_date - timedelta(days=7)
+
+        logger.info(
+            "generating_smart_report",
+            start=start_date.isoformat(),
+            end=end_date.isoformat(),
+        )
+
+        # Fetch metrics for current and previous week
+        current_metrics = await generator._fetch_weekly_metrics(start_date, end_date)
+        previous_metrics = await generator._fetch_weekly_metrics(prev_start, start_date)
+
+        # Calculate week-over-week changes
+        current_metrics = generator._calculate_changes(current_metrics, previous_metrics)
+
+        # Convert to privacy-safe format
+        privacy_safe = convert_to_privacy_safe(current_metrics, previous_metrics)
+
+        # Generate insights using InsightEngine
+        insight_engine = InsightEngine(
+            anthropic_settings=settings.anthropic,
+            insight_settings=settings.insight,
+        )
+        insights = await insight_engine.generate(privacy_safe)
+
+        # Format for Telegram
+        formatter = TelegramFormatter()
+        report = formatter.format(
+            metrics=privacy_safe,
+            insights=insights,
+            week_start=start_date,
+            week_end=end_date,
+        )
+
+        if stdout:
+            print(report)
+            print("\n" + "=" * 50)
+            print(f"Report length: {len(report)} characters")
+            print(f"Insights source: {insights[0].source if insights else 'none'}")
+
+        if dry_run:
+            logger.info(
+                "dry_run_complete",
+                report_length=len(report),
+                insight_count=len(insights),
+                insight_source=insights[0].source if insights else "none",
+            )
+            return None
+
+        # Send via Clawdbot
+        if settings.clawdbot.enabled and settings.clawdbot.hooks_token:
+            delivery = ClawdbotDelivery(settings.clawdbot)
+            week_id = start_date.strftime("%Y-W%W")
+            result = await delivery.send_report(report, week_id)
+
+            if result.success:
+                logger.info(
+                    "report_delivered",
+                    run_id=result.run_id,
+                    attempts=result.attempt,
+                )
+            else:
+                logger.error(
+                    "report_delivery_failed",
+                    error=result.error,
+                    attempts=result.attempt,
+                )
+
+            return result
+        else:
+            logger.warning("clawdbot_not_configured")
+            return None
+
+    finally:
+        await generator.disconnect()
+
+
 async def main():
     """CLI entry point for generating a weekly report."""
-    from ..config import get_settings
-
     settings = get_settings()
 
     generator = WeeklyReportGenerator(
@@ -478,6 +638,44 @@ async def main():
 def run_report() -> None:
     """Synchronous entry point for CLI."""
     asyncio.run(main())
+
+
+def run_report_and_send() -> None:
+    """Generate weekly report and send via Telegram.
+
+    CLI entry point with options:
+        --dry-run: Generate but don't send
+        --stdout: Print report to stdout
+    """
+    parser = argparse.ArgumentParser(
+        description="Generate and send weekly health report via Telegram"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate report but don't send",
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Print report to stdout",
+    )
+
+    args = parser.parse_args()
+
+    # Setup logging
+    from ..logging import setup_logging
+
+    settings = get_settings()
+    setup_logging(settings.app)
+
+    result = asyncio.run(generate_and_send_report(
+        dry_run=args.dry_run,
+        stdout=args.stdout,
+    ))
+
+    if result and not result.success:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
