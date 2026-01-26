@@ -57,6 +57,10 @@ dev = [
 health-ingest = "health_ingest.main:run"
 health-check = "health_ingest.main:health_check_cli"
 health-report = "health_ingest.reports.weekly:run_report"
+health-archive-replay = "health_ingest.cli:archive_replay"
+health-archive = "health_ingest.cli:archive_manage"
+health-dlq-inspect = "health_ingest.cli:dlq_inspect"
+health-dlq-replay = "health_ingest.cli:dlq_replay"
 
 [build-system]
 requires = ["hatchling"]

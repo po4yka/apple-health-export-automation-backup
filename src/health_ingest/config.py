@@ -87,6 +87,96 @@ class AnthropicSettings(BaseSettings):
     model: str = Field(default="claude-sonnet-4-20250514", description="Claude model to use")
 
 
+class ArchiveSettings(BaseSettings):
+    """Raw payload archive settings."""
+
+    model_config = SettingsConfigDict(env_prefix="ARCHIVE_")
+
+    enabled: bool = Field(default=True, description="Enable raw payload archiving")
+    dir: str = Field(default="/data/archive", description="Archive directory path")
+    rotation: str = Field(default="daily", description="Rotation strategy: daily or hourly")
+    max_age_days: int = Field(default=30, description="Delete archives older than this")
+    compress_after_days: int = Field(default=7, description="Compress archives older than this")
+
+    @field_validator("rotation")
+    @classmethod
+    def validate_rotation(cls, v: str) -> str:
+        """Validate rotation strategy."""
+        normalized = v.lower()
+        if normalized not in ("daily", "hourly"):
+            raise ValueError(f"Invalid rotation '{v}'. Must be 'daily' or 'hourly'")
+        return normalized
+
+    @field_validator("max_age_days", "compress_after_days")
+    @classmethod
+    def validate_positive_days(cls, v: int) -> int:
+        """Validate days are positive."""
+        if v < 1:
+            raise ValueError(f"Days must be at least 1, got {v}")
+        return v
+
+
+class DedupSettings(BaseSettings):
+    """Deduplication cache settings."""
+
+    model_config = SettingsConfigDict(env_prefix="DEDUP_")
+
+    enabled: bool = Field(default=True, description="Enable deduplication")
+    max_size: int = Field(default=100_000, description="Maximum cache entries")
+    ttl_hours: int = Field(default=24, description="TTL for cache entries in hours")
+    persist_enabled: bool = Field(default=True, description="Enable SQLite persistence")
+    persist_path: str = Field(default="/data/dedup/cache.db", description="Persistence file path")
+    checkpoint_interval_sec: int = Field(default=300, description="Checkpoint interval in seconds")
+
+    @field_validator("max_size")
+    @classmethod
+    def validate_max_size(cls, v: int) -> int:
+        """Validate max size is reasonable."""
+        if v < 100:
+            raise ValueError(f"Max size must be at least 100, got {v}")
+        if v > 10_000_000:
+            raise ValueError(f"Max size too large (max 10M), got {v}")
+        return v
+
+    @field_validator("ttl_hours")
+    @classmethod
+    def validate_ttl_hours(cls, v: int) -> int:
+        """Validate TTL is reasonable."""
+        if v < 1:
+            raise ValueError(f"TTL must be at least 1 hour, got {v}")
+        return v
+
+
+class DLQSettings(BaseSettings):
+    """Dead-letter queue settings."""
+
+    model_config = SettingsConfigDict(env_prefix="DLQ_")
+
+    enabled: bool = Field(default=True, description="Enable dead-letter queue")
+    db_path: str = Field(default="/data/dlq/dlq.db", description="SQLite database path")
+    max_entries: int = Field(default=10_000, description="Maximum entries before eviction")
+    retention_days: int = Field(default=30, description="Delete entries older than this")
+    max_retries: int = Field(default=3, description="Maximum replay attempts")
+
+    @field_validator("max_entries")
+    @classmethod
+    def validate_max_entries(cls, v: int) -> int:
+        """Validate max entries is reasonable."""
+        if v < 100:
+            raise ValueError(f"Max entries must be at least 100, got {v}")
+        return v
+
+    @field_validator("max_retries")
+    @classmethod
+    def validate_max_retries(cls, v: int) -> int:
+        """Validate max retries is reasonable."""
+        if v < 1:
+            raise ValueError(f"Max retries must be at least 1, got {v}")
+        if v > 10:
+            raise ValueError(f"Max retries too high (max 10), got {v}")
+        return v
+
+
 class AppSettings(BaseSettings):
     """Application settings."""
 
@@ -126,6 +216,9 @@ class Settings(BaseSettings):
     influxdb: InfluxDBSettings = Field(default_factory=InfluxDBSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
     app: AppSettings = Field(default_factory=AppSettings)
+    archive: ArchiveSettings = Field(default_factory=ArchiveSettings)
+    dedup: DedupSettings = Field(default_factory=DedupSettings)
+    dlq: DLQSettings = Field(default_factory=DLQSettings)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -135,6 +228,9 @@ class Settings(BaseSettings):
             influxdb=InfluxDBSettings(),
             anthropic=AnthropicSettings(),
             app=AppSettings(),
+            archive=ArchiveSettings(),
+            dedup=DedupSettings(),
+            dlq=DLQSettings(),
         )
 
 

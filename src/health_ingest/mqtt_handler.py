@@ -1,14 +1,21 @@
 """MQTT handler for Health Auto Export data ingestion."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 from collections.abc import Callable
-from typing import Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 import paho.mqtt.client as mqtt
 import structlog
 
 from .config import MQTTSettings
+
+if TYPE_CHECKING:
+    from .archive import RawArchiver
+    from .dlq import DeadLetterQueue
 
 logger = structlog.get_logger(__name__)
 
@@ -19,17 +26,23 @@ class MQTTHandler:
     def __init__(
         self,
         settings: MQTTSettings,
-        message_callback: Callable[[str, dict[str, Any]], None],
+        message_callback: Callable[[str, dict[str, Any], str | None], None],
+        archiver: RawArchiver | None = None,
+        dlq: DeadLetterQueue | None = None,
     ) -> None:
         """Initialize MQTT handler.
 
         Args:
             settings: MQTT connection settings.
             message_callback: Callback function to process messages.
-                Takes topic (str) and payload (dict) as arguments.
+                Takes topic (str), payload (dict), and archive_id (str | None).
+            archiver: Optional RawArchiver for persisting payloads.
+            dlq: Optional DeadLetterQueue for routing parse errors.
         """
         self._settings = settings
         self._message_callback = message_callback
+        self._archiver = archiver
+        self._dlq = dlq
         self._client: mqtt.Client | None = None
         self._connected = asyncio.Event()
         self._running = False
@@ -78,30 +91,64 @@ class MQTTHandler:
     ) -> None:
         """Handle incoming MQTT message."""
         topic = message.topic
+        raw_payload = message.payload
+        archive_id: str | None = None
+
+        # Archive raw payload first (before any parsing)
+        if self._archiver:
+            try:
+                archive_id = self._archiver.store_sync(
+                    topic=topic,
+                    payload=raw_payload,
+                    received_at=datetime.now(),
+                )
+            except Exception as e:
+                logger.error("archive_store_failed", topic=topic, error=str(e))
+
         try:
-            payload = json.loads(message.payload.decode("utf-8"))
+            payload = json.loads(raw_payload.decode("utf-8"))
             logger.debug(
                 "mqtt_message_received",
                 topic=topic,
-                payload_size=len(message.payload),
+                payload_size=len(raw_payload),
+                archive_id=archive_id,
             )
 
             # Schedule callback in the asyncio event loop
             if self._loop:
                 self._loop.call_soon_threadsafe(
-                    lambda: self._message_callback(topic, payload)
+                    lambda t=topic, p=payload, a=archive_id: self._message_callback(t, p, a)
                 )
         except json.JSONDecodeError as e:
             logger.error(
                 "mqtt_payload_parse_error",
                 topic=topic,
                 error=str(e),
+                archive_id=archive_id,
             )
+            # Route to DLQ
+            if self._dlq and self._loop:
+                from .dlq import DLQCategory
+
+                # Capture variables for lambda closure
+                error = e
+                self._loop.call_soon_threadsafe(
+                    lambda t=topic, p=raw_payload, err=error, a=archive_id: asyncio.create_task(
+                        self._dlq.enqueue(
+                            category=DLQCategory.JSON_PARSE_ERROR,
+                            topic=t,
+                            payload=p,
+                            error=err,
+                            archive_id=a,
+                        )
+                    )
+                )
         except Exception as e:
             logger.exception(
                 "mqtt_message_processing_error",
                 topic=topic,
                 error=str(e),
+                archive_id=archive_id,
             )
 
     async def connect(self) -> None:

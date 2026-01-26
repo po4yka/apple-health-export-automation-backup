@@ -31,6 +31,11 @@ services:
     depends_on:
       influxdb:
         condition: service_healthy
+    volumes:
+      # Resilience layer data persistence
+      - /mnt/nvme/health/archive:/data/archive
+      - /mnt/nvme/health/dedup:/data/dedup
+      - /mnt/nvme/health/dlq:/data/dlq
     environment:
       # MQTT settings - connects to external broker (e.g., existing Mosquitto)
       - MQTT_HOST=${MQTT_HOST:-192.168.1.175}
@@ -47,6 +52,25 @@ services:
       - APP_LOG_LEVEL=${APP_LOG_LEVEL:-INFO}
       - APP_LOG_FORMAT=${APP_LOG_FORMAT:-json}
       - APP_DEFAULT_SOURCE=${APP_DEFAULT_SOURCE:-health_auto_export}
+      # Archive settings - raw MQTT payload persistence
+      - ARCHIVE_ENABLED=${ARCHIVE_ENABLED:-true}
+      - ARCHIVE_DIR=/data/archive
+      - ARCHIVE_ROTATION=${ARCHIVE_ROTATION:-daily}
+      - ARCHIVE_MAX_AGE_DAYS=${ARCHIVE_MAX_AGE_DAYS:-30}
+      - ARCHIVE_COMPRESS_AFTER_DAYS=${ARCHIVE_COMPRESS_AFTER_DAYS:-7}
+      # Deduplication settings - prevent duplicate writes
+      - DEDUP_ENABLED=${DEDUP_ENABLED:-true}
+      - DEDUP_MAX_SIZE=${DEDUP_MAX_SIZE:-100000}
+      - DEDUP_TTL_HOURS=${DEDUP_TTL_HOURS:-24}
+      - DEDUP_PERSIST_ENABLED=${DEDUP_PERSIST_ENABLED:-true}
+      - DEDUP_PERSIST_PATH=/data/dedup/cache.db
+      - DEDUP_CHECKPOINT_INTERVAL_SEC=${DEDUP_CHECKPOINT_INTERVAL_SEC:-300}
+      # Dead-letter queue settings - failed message storage
+      - DLQ_ENABLED=${DLQ_ENABLED:-true}
+      - DLQ_DB_PATH=/data/dlq/dlq.db
+      - DLQ_MAX_ENTRIES=${DLQ_MAX_ENTRIES:-10000}
+      - DLQ_RETENTION_DAYS=${DLQ_RETENTION_DAYS:-30}
+      - DLQ_MAX_RETRIES=${DLQ_MAX_RETRIES:-3}
     healthcheck:
       test: ["CMD", "uv", "run", "health-check"]
       interval: 30s
