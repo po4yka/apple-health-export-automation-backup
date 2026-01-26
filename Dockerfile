@@ -62,9 +62,9 @@ COPY --from=builder /app /app
 # Switch to non-root user
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import health_ingest; print('ok')" || exit 1
+# Health check - verifies InfluxDB connectivity
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
+    CMD uv run health-check || exit 1
 
 # Run the service
 CMD ["uv", "run", "health-ingest"]

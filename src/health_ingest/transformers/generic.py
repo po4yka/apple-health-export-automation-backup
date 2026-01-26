@@ -36,8 +36,8 @@ class GenericTransformer(BaseTransformer):
                 if isinstance(date, str):
                     date = datetime.fromisoformat(date.replace("Z", "+00:00"))
 
-                # Normalize metric name for tag
-                metric_type = self._normalize_metric_name(name)
+                # Normalize and sanitize metric name for tag
+                metric_type = self._sanitize_tag(self._normalize_metric_name(name))
 
                 point = (
                     Point(self.measurement)
@@ -47,10 +47,10 @@ class GenericTransformer(BaseTransformer):
                     .time(date)
                 )
 
-                # Add unit if available
+                # Add unit if available (sanitized)
                 units = item.get("units")
                 if units:
-                    point.tag("unit", units)
+                    point.tag("unit", self._sanitize_tag(units))
 
                 # Add min/max/avg if available
                 if item.get("min") is not None:
@@ -62,7 +62,8 @@ class GenericTransformer(BaseTransformer):
 
                 points.append(point)
 
-            except Exception:
+            except Exception as e:
+                self._log_transform_error(e, item, context="generic_transform")
                 continue
 
         return points

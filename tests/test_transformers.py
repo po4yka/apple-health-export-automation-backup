@@ -46,7 +46,8 @@ class TestHeartTransformer:
         assert len(points) == 1
         point = points[0]
         assert point._name == "heart"
-        assert point._tags["source"] == "Apple Watch"
+        # Source is sanitized: spaces become underscores
+        assert point._tags["source"] == "Apple_Watch"
 
     def test_transform_hrv(self):
         data = {

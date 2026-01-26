@@ -55,6 +55,7 @@ dev = [
 
 [project.scripts]
 health-ingest = "health_ingest.main:run"
+health-check = "health_ingest.main:health_check_cli"
 health-report = "health_ingest.reports.weekly:run_report"
 
 [build-system]

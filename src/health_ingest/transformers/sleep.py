@@ -3,9 +3,12 @@
 from datetime import datetime
 from typing import Any
 
+import structlog
 from influxdb_client import Point
 
 from .base import BaseTransformer, SleepAnalysis
+
+logger = structlog.get_logger(__name__)
 
 
 class SleepTransformer(BaseTransformer):
@@ -35,7 +38,8 @@ class SleepTransformer(BaseTransformer):
                 else:
                     # Handle raw sleep stage data
                     points.extend(self._transform_sleep_stage(item))
-            except Exception:
+            except Exception as e:
+                self._log_transform_error(e, item, context="sleep_transform")
                 continue
 
         return points
@@ -71,8 +75,13 @@ class SleepTransformer(BaseTransformer):
             point.time(sleep.date)
             points.append(point)
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "sleep_analysis_transform_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                date=str(item.get("date", "unknown")),
+            )
 
         return points
 
@@ -114,7 +123,13 @@ class SleepTransformer(BaseTransformer):
             point.time(date)
             points.append(point)
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "sleep_stage_transform_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                name=item.get("name"),
+                date=str(item.get("date", "unknown")),
+            )
 
         return points

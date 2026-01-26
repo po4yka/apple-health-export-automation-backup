@@ -1,11 +1,15 @@
 """Base transformer class and common models."""
 
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
+import structlog
 from influxdb_client import Point
 from pydantic import BaseModel, Field
+
+logger = structlog.get_logger(__name__)
 
 
 class HealthMetric(BaseModel):
@@ -80,4 +84,44 @@ class BaseTransformer(ABC):
 
     def _get_source(self, data: dict[str, Any]) -> str:
         """Extract source from data or use default."""
-        return data.get("source") or self._default_source
+        return self._sanitize_tag(data.get("source") or self._default_source)
+
+    def _sanitize_tag(self, value: str, max_length: int = 256) -> str:
+        """Sanitize a tag value to prevent injection and cardinality issues.
+
+        Args:
+            value: Raw tag value.
+            max_length: Maximum allowed length.
+
+        Returns:
+            Sanitized tag value with only allowed characters.
+        """
+        if not value:
+            return "unknown"
+        # Allow only alphanumeric, underscore, hyphen, and dot
+        sanitized = re.sub(r"[^a-zA-Z0-9_.\-]", "_", str(value))
+        return sanitized[:max_length]
+
+    def _log_transform_error(
+        self,
+        error: Exception,
+        item: dict[str, Any],
+        context: str | None = None,
+    ) -> None:
+        """Log a transformation error with context.
+
+        Args:
+            error: The exception that occurred.
+            item: The data item that failed to transform.
+            context: Additional context about the error.
+        """
+        logger.warning(
+            "transform_failed",
+            transformer=self.__class__.__name__,
+            measurement=self.measurement,
+            error=str(error),
+            error_type=type(error).__name__,
+            metric_name=item.get("name"),
+            metric_date=str(item.get("date", "unknown")),
+            context=context,
+        )
