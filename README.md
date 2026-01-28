@@ -5,6 +5,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 ## Features
 
 - **Automated Data Ingestion**: Receives health data via MQTT from Health Auto Export app
+- **Resilient Ingestion**: Backpressure with bounded queue, raw payload archiving, deduplication, and DLQ handling
 - **Time-Series Storage**: Stores all metrics in InfluxDB 2.x with infinite retention
 - **Rich Dashboards**: Pre-configured Grafana dashboards for activity, heart rate, sleep, workouts, and vitals
 - **AI-Powered Insights**: Weekly health reports with personalized recommendations via Claude API
@@ -231,6 +232,9 @@ apple-health-export-automation-backup/
 │       ├── logging.py          # Structured logging setup
 │       ├── mqtt_handler.py     # MQTT subscription and routing
 │       ├── influx_writer.py    # Async batch writes to InfluxDB
+│       ├── archive.py          # Raw payload archiver
+│       ├── dedup.py            # Deduplication cache
+│       ├── dlq.py              # Dead-letter queue
 │       ├── transformers/       # Data transformation modules
 │       │   ├── base.py         # Base classes and Pydantic models
 │       │   ├── registry.py     # Transformer routing
@@ -246,7 +250,8 @@ apple-health-export-automation-backup/
 ├── tests/
 │   ├── conftest.py             # Pytest fixtures
 │   ├── test_transformers.py    # Transformer unit tests
-│   └── test_mqtt_handler.py    # MQTT handler tests
+│   ├── test_mqtt_handler.py    # MQTT handler tests
+│   └── test_influx_writer.py   # Influx writer buffer tests
 └── grafana/
     └── provisioning/
         ├── datasources/
@@ -267,6 +272,9 @@ apple-health-export-automation-backup/
 | `MQTT_USERNAME` | - | MQTT authentication username |
 | `MQTT_PASSWORD` | - | MQTT authentication password |
 | `MQTT_TOPIC` | `health/export/#` | MQTT topic subscription pattern |
+| `MQTT_CLEAN_SESSION` | `true` | Use clean session on connect |
+| `MQTT_RECONNECT_DELAY_MIN` | `1.0` | Minimum reconnect delay in seconds |
+| `MQTT_RECONNECT_DELAY_MAX` | `60.0` | Maximum reconnect delay in seconds |
 | `INFLUXDB_URL` | `http://influxdb:8086` | InfluxDB connection URL |
 | `INFLUXDB_TOKEN` | **required** | InfluxDB API token |
 | `INFLUXDB_ORG` | `health` | InfluxDB organization |
@@ -276,6 +284,15 @@ apple-health-export-automation-backup/
 | `APP_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
 | `APP_LOG_FORMAT` | `json` | Log format (json, console) |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for weekly reports |
+
+### DLQ Categories
+
+- `json_parse_error`
+- `unicode_decode_error`
+- `validation_error`
+- `transform_error`
+- `write_error`
+- `unknown_error`
 
 ## Troubleshooting
 

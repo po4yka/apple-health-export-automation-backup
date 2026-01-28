@@ -20,6 +20,7 @@ class DLQCategory(str, Enum):
     """Categories of DLQ entries for error classification."""
 
     JSON_PARSE_ERROR = "json_parse_error"
+    UNICODE_DECODE_ERROR = "unicode_decode_error"
     VALIDATION_ERROR = "validation_error"
     TRANSFORM_ERROR = "transform_error"
     WRITE_ERROR = "write_error"

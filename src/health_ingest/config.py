@@ -21,6 +21,13 @@ class MQTTSettings(BaseSettings):
     topic: str = Field(default="health/export/#", description="MQTT topic to subscribe")
     client_id: str = Field(default="health-ingest", description="MQTT client ID")
     keepalive: int = Field(default=60, description="MQTT keepalive interval in seconds")
+    clean_session: bool = Field(default=True, description="Clean session on connect")
+    reconnect_delay_min: float = Field(
+        default=1.0, description="Minimum reconnect delay in seconds"
+    )
+    reconnect_delay_max: float = Field(
+        default=60.0, description="Maximum reconnect delay in seconds"
+    )
 
     @field_validator("port")
     @classmethod
@@ -36,6 +43,25 @@ class MQTTSettings(BaseSettings):
         """Validate keepalive is positive."""
         if v < 1:
             raise ValueError(f"Keepalive must be at least 1 second, got {v}")
+        return v
+
+    @field_validator("reconnect_delay_min", "reconnect_delay_max")
+    @classmethod
+    def validate_reconnect_delay(cls, v: float) -> float:
+        """Validate reconnect delays are positive."""
+        if v <= 0:
+            raise ValueError(f"Reconnect delay must be > 0 seconds, got {v}")
+        return v
+
+    @field_validator("reconnect_delay_max")
+    @classmethod
+    def validate_reconnect_delay_bounds(cls, v: float, info) -> float:
+        """Ensure max reconnect delay is >= min."""
+        min_value = info.data.get("reconnect_delay_min")
+        if min_value is not None and v < min_value:
+            raise ValueError(
+                f"Reconnect delay max must be >= min ({min_value}), got {v}"
+            )
         return v
 
 

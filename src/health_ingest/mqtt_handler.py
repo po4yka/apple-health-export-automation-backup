@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +26,7 @@ class MQTTHandler:
     def __init__(
         self,
         settings: MQTTSettings,
-        message_callback: Callable[[str, dict[str, Any], str | None], None],
+        message_callback: Callable[[str, dict[str, Any], str | None], Awaitable[None]],
         archiver: RawArchiver | None = None,
         dlq: DeadLetterQueue | None = None,
     ) -> None:
@@ -114,10 +114,42 @@ class MQTTHandler:
                 archive_id=archive_id,
             )
 
-            # Schedule callback in the asyncio event loop
+            # Schedule callback in the asyncio event loop (blocks to apply backpressure)
             if self._loop:
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._message_callback(topic, payload, archive_id),
+                        self._loop,
+                    )
+                    future.result()
+                except Exception as e:
+                    logger.error(
+                        "mqtt_message_callback_error",
+                        topic=topic,
+                        error=str(e),
+                        archive_id=archive_id,
+                    )
+        except UnicodeDecodeError as e:
+            logger.error(
+                "mqtt_payload_decode_error",
+                topic=topic,
+                error=str(e),
+                archive_id=archive_id,
+            )
+            if self._dlq and self._loop:
+                from .dlq import DLQCategory
+
+                error = e
                 self._loop.call_soon_threadsafe(
-                    lambda t=topic, p=payload, a=archive_id: self._message_callback(t, p, a)
+                    lambda t=topic, p=raw_payload, err=error, a=archive_id: asyncio.create_task(
+                        self._dlq.enqueue(
+                            category=DLQCategory.UNICODE_DECODE_ERROR,
+                            topic=t,
+                            payload=p,
+                            error=err,
+                            archive_id=a,
+                        )
+                    )
                 )
         except json.JSONDecodeError as e:
             logger.error(
@@ -157,6 +189,7 @@ class MQTTHandler:
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=self._settings.client_id,
+            clean_session=self._settings.clean_session,
         )
 
         # Set callbacks
@@ -170,6 +203,12 @@ class MQTTHandler:
                 self._settings.username,
                 self._settings.password,
             )
+
+        # Configure reconnect backoff
+        self._client.reconnect_delay_set(
+            min_delay=self._settings.reconnect_delay_min,
+            max_delay=self._settings.reconnect_delay_max,
+        )
 
         # Connect
         logger.info(
