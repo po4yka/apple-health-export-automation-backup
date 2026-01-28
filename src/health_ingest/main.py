@@ -21,6 +21,8 @@ logger = structlog.get_logger(__name__)
 
 # Maximum concurrent message processing tasks to prevent DoS
 MAX_CONCURRENT_MESSAGES = 100
+# Bounded queue size for backpressure (blocks MQTT callback when full)
+MAX_QUEUE_SIZE = 1000
 
 
 class HealthIngestService:
@@ -38,9 +40,8 @@ class HealthIngestService:
         self._shutdown_event = asyncio.Event()
         self._message_count = 0
         self._duplicate_count = 0
-        self._pending_tasks: set[asyncio.Task] = set()
-        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_MESSAGES)
-        self._rejected_count = 0  # Messages rejected due to rate limiting
+        self._message_queue: asyncio.Queue[tuple[str, dict[str, Any], str | None]] | None = None
+        self._worker_tasks: list[asyncio.Task] = []
         self._checkpoint_task: asyncio.Task | None = None
 
     async def start(self) -> None:
@@ -96,10 +97,17 @@ class HealthIngestService:
         self._influx_writer = InfluxWriter(self._settings.influxdb)
         await self._influx_writer.connect()
 
+        # Initialize message queue and workers for backpressure
+        self._message_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+        self._worker_tasks = [
+            asyncio.create_task(self._worker_loop(worker_id=i))
+            for i in range(MAX_CONCURRENT_MESSAGES)
+        ]
+
         # Initialize and connect MQTT handler
         self._mqtt_handler = MQTTHandler(
             settings=self._settings.mqtt,
-            message_callback=self._handle_message,
+            message_callback=self._enqueue_message,
             archiver=self._archiver,
             dlq=self._dlq,
         )
@@ -109,7 +117,12 @@ class HealthIngestService:
 
     async def stop(self) -> None:
         """Stop the ingestion service gracefully."""
-        logger.info("service_stopping", pending_tasks=len(self._pending_tasks))
+        queue_size = self._message_queue.qsize() if self._message_queue else 0
+        logger.info(
+            "service_stopping",
+            queue_size=queue_size,
+            workers=len(self._worker_tasks),
+        )
 
         # Stop checkpoint task
         if self._checkpoint_task:
@@ -123,23 +136,17 @@ class HealthIngestService:
         if self._mqtt_handler:
             await self._mqtt_handler.disconnect()
 
-        # Wait for pending tasks to complete (with timeout)
-        if self._pending_tasks:
-            logger.info("awaiting_pending_tasks", count=len(self._pending_tasks))
-            done, pending = await asyncio.wait(
-                self._pending_tasks,
-                timeout=10.0,  # 10 second timeout for graceful shutdown
-            )
-            if pending:
-                logger.warning(
-                    "cancelling_pending_tasks",
-                    count=len(pending),
-                    completed=len(done),
-                )
-                for task in pending:
-                    task.cancel()
-                # Wait for cancellation to complete
-                await asyncio.gather(*pending, return_exceptions=True)
+        # Drain queue (with timeout), then stop workers
+        if self._message_queue:
+            try:
+                await asyncio.wait_for(self._message_queue.join(), timeout=10.0)
+            except TimeoutError:
+                logger.warning("queue_drain_timeout", remaining=self._message_queue.qsize())
+
+        if self._worker_tasks:
+            for task in self._worker_tasks:
+                task.cancel()
+            await asyncio.gather(*self._worker_tasks, return_exceptions=True)
 
         if self._influx_writer:
             await self._influx_writer.disconnect()
@@ -165,33 +172,34 @@ class HealthIngestService:
             payload: Parsed JSON payload.
             archive_id: Archive entry ID for correlation.
         """
-        # Schedule async processing with task tracking and rate limiting
-        task = asyncio.create_task(self._process_with_limit(topic, payload, archive_id))
-        self._pending_tasks.add(task)
-        task.add_done_callback(self._pending_tasks.discard)
+        asyncio.create_task(self._enqueue_message(topic, payload, archive_id))
 
-    async def _process_with_limit(
+    async def _enqueue_message(
         self, topic: str, payload: dict[str, Any], archive_id: str | None
     ) -> None:
-        """Process message with rate limiting.
+        """Enqueue an incoming MQTT message with backpressure."""
+        if not self._message_queue:
+            logger.warning("message_queue_not_ready")
+            return
+        await self._message_queue.put((topic, payload, archive_id))
 
-        Args:
-            topic: MQTT topic.
-            payload: Health data payload.
-            archive_id: Archive entry ID for correlation.
-        """
-        # Try to acquire semaphore without blocking
-        acquired = self._semaphore.locked() is False
-        if not acquired and self._semaphore._value == 0:  # type: ignore[attr-defined]
-            # All slots are in use - log and process anyway (with semaphore)
-            logger.debug(
-                "rate_limit_queued",
-                topic=topic,
-                pending=len(self._pending_tasks),
-            )
+    async def _worker_loop(self, worker_id: int) -> None:
+        """Worker loop for processing queued messages."""
+        if not self._message_queue:
+            return
 
-        async with self._semaphore:
-            await self._process_message(topic, payload, archive_id)
+        while True:
+            try:
+                topic, payload, archive_id = await self._message_queue.get()
+            except asyncio.CancelledError:
+                break
+
+            try:
+                await self._process_message(topic, payload, archive_id)
+            except Exception as e:
+                logger.exception("worker_error", worker_id=worker_id, error=str(e))
+            finally:
+                self._message_queue.task_done()
 
     async def _process_message(
         self, topic: str, payload: dict[str, Any], archive_id: str | None
@@ -334,7 +342,8 @@ class HealthIngestService:
             "service": "healthy",
             "messages_processed": self._message_count,
             "duplicates_filtered": self._duplicate_count,
-            "pending_tasks": len(self._pending_tasks),
+            "queue_size": self._message_queue.qsize() if self._message_queue else 0,
+            "workers": len(self._worker_tasks),
             "max_concurrent": MAX_CONCURRENT_MESSAGES,
         }
 

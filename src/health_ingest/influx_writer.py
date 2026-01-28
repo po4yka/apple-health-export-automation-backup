@@ -197,7 +197,7 @@ class InfluxWriter:
                 )
                 # Keep only newest points up to max buffer size
                 combined = points_to_write + self._buffer
-                self._buffer = combined[:MAX_BUFFER_SIZE]
+                self._buffer = combined[-MAX_BUFFER_SIZE:]
 
     async def _write_batch(self, points: list[Point]) -> None:
         """Write a batch of points to InfluxDB.

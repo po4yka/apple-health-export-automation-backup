@@ -178,42 +178,49 @@ class RawArchiver:
                         yield entry
 
     async def _read_jsonl(self, path: Path) -> AsyncIterator[dict[str, Any]]:
-        """Read entries from a JSONL file."""
-        loop = asyncio.get_running_loop()
-
-        def read_file() -> list[dict[str, Any]]:
-            entries = []
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        try:
-                            entries.append(json.loads(line))
-                        except json.JSONDecodeError as e:
-                            logger.warning("archive_parse_error", path=str(path), error=str(e))
-            return entries
-
-        entries = await loop.run_in_executor(None, read_file)
-        for entry in entries:
+        """Stream entries from a JSONL file."""
+        async for entry in self._stream_jsonl(path, lambda p: open(p, encoding="utf-8")):
             yield entry
 
     async def _read_gzip(self, path: Path) -> AsyncIterator[dict[str, Any]]:
-        """Read entries from a gzipped JSONL file."""
-        loop = asyncio.get_running_loop()
+        """Stream entries from a gzipped JSONL file."""
+        async for entry in self._stream_jsonl(path, lambda p: gzip.open(p, "rt", encoding="utf-8")):
+            yield entry
 
-        def read_file() -> list[dict[str, Any]]:
-            entries = []
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
+    async def _stream_jsonl(
+        self, path: Path, opener: Callable[[Path], Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream JSONL entries without loading the whole file into memory."""
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[object] = asyncio.Queue(maxsize=1000)
+        sentinel = object()
+
+        def producer() -> None:
+            try:
+                with opener(path) as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
                         try:
-                            entries.append(json.loads(line))
+                            entry = json.loads(line)
                         except json.JSONDecodeError as e:
                             logger.warning("archive_parse_error", path=str(path), error=str(e))
-            return entries
+                            continue
+                        asyncio.run_coroutine_threadsafe(queue.put(entry), loop).result()
+            except Exception as e:
+                logger.error("archive_stream_error", path=str(path), error=str(e))
+            finally:
+                asyncio.run_coroutine_threadsafe(queue.put(sentinel), loop).result()
 
-        entries = await loop.run_in_executor(None, read_file)
-        for entry in entries:
-            yield entry
+        producer_task = loop.run_in_executor(None, producer)
+
+        while True:
+            item = await queue.get()
+            if item is sentinel:
+                break
+            yield item  # type: ignore[misc]
+
+        await producer_task
 
     async def compress_old_files(self) -> int:
         """Compress archive files older than compress_after_days.

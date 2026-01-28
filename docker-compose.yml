@@ -43,6 +43,9 @@ services:
       - MQTT_USERNAME=${MQTT_USERNAME:-}
       - MQTT_PASSWORD=${MQTT_PASSWORD:-}
       - MQTT_TOPIC=${MQTT_TOPIC:-health/export/#}
+      - MQTT_CLEAN_SESSION=${MQTT_CLEAN_SESSION:-true}
+      - MQTT_RECONNECT_DELAY_MIN=${MQTT_RECONNECT_DELAY_MIN:-1.0}
+      - MQTT_RECONNECT_DELAY_MAX=${MQTT_RECONNECT_DELAY_MAX:-60.0}
       # InfluxDB settings - connects to influxdb service
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
