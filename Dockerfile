@@ -22,8 +22,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_COMPILE_BYTECODE=1
 
-# Install uv package manager
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv package manager (via pip; avoids GHCR rate-limit issues)
+RUN pip install --no-cache-dir uv
 
 # Set work directory
 WORKDIR /app

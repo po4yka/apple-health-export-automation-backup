@@ -57,7 +57,7 @@ class MQTTHandler:
         properties: mqtt.Properties | None,
     ) -> None:
         """Handle MQTT connection established."""
-        if reason_code == mqtt.ReasonCode(mqtt.CONNACK_ACCEPTED):
+        if not reason_code.is_failure:
             logger.info(
                 "mqtt_connected",
                 host=self._settings.host,

@@ -250,6 +250,38 @@ class InsightSettings(BaseSettings):
         return v
 
 
+class HTTPSettings(BaseSettings):
+    """HTTP ingestion API settings."""
+
+    model_config = SettingsConfigDict(env_prefix="HTTP_")
+
+    enabled: bool = Field(default=False, description="Enable HTTP ingestion endpoint")
+    host: str = Field(default="0.0.0.0", description="HTTP server bind address")
+    port: int = Field(default=8080, description="HTTP server port")
+    auth_token: str = Field(default="", description="Bearer token for authentication")
+    max_request_size: int = Field(
+        default=10_485_760, description="Maximum request body size in bytes (10MB)"
+    )
+
+    @field_validator("port")
+    @classmethod
+    def validate_port(cls, v: int) -> int:
+        """Validate port is in valid range."""
+        if not 1 <= v <= 65535:
+            raise ValueError(f"Port must be between 1 and 65535, got {v}")
+        return v
+
+    @field_validator("max_request_size")
+    @classmethod
+    def validate_max_request_size(cls, v: int) -> int:
+        """Validate max request size is reasonable."""
+        if v < 1024:
+            raise ValueError(f"Max request size must be at least 1KB, got {v}")
+        if v > 104_857_600:
+            raise ValueError(f"Max request size too large (max 100MB), got {v}")
+        return v
+
+
 class AppSettings(BaseSettings):
     """Application settings."""
 
@@ -286,6 +318,7 @@ class Settings(BaseSettings):
     """Combined application settings."""
 
     mqtt: MQTTSettings = Field(default_factory=MQTTSettings)
+    http: HTTPSettings = Field(default_factory=HTTPSettings)
     influxdb: InfluxDBSettings = Field(default_factory=InfluxDBSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
     app: AppSettings = Field(default_factory=AppSettings)
@@ -300,6 +333,7 @@ class Settings(BaseSettings):
         """Load settings from environment variables."""
         return cls(
             mqtt=MQTTSettings(),
+            http=HTTPSettings(),
             influxdb=InfluxDBSettings(),
             anthropic=AnthropicSettings(),
             app=AppSettings(),

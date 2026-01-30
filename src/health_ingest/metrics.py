@@ -88,6 +88,13 @@ CIRCUIT_BREAKER_TRIPS = Counter(
     ["name"],
 )
 
+# -- HTTP --
+HTTP_REQUESTS_TOTAL = Counter(
+    "health_ingest_http_requests_total",
+    "Total HTTP requests",
+    ["method", "path", "status"],
+)
+
 # -- MQTT --
 MQTT_CONNECTED = Gauge(
     "health_ingest_mqtt_connected",

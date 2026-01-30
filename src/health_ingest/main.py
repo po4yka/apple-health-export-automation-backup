@@ -13,6 +13,7 @@ from .circuit_breaker import CircuitState
 from .config import get_settings
 from .dedup import DeduplicationCache
 from .dlq import DeadLetterQueue, DLQCategory
+from .http_handler import HTTPHandler
 from .influx_writer import InfluxWriter
 from .logging import setup_logging
 from .metrics import (
@@ -45,6 +46,7 @@ class HealthIngestService:
         """Initialize the health ingestion service."""
         self._settings = get_settings()
         self._mqtt_handler: MQTTHandler | None = None
+        self._http_handler: HTTPHandler | None = None
         self._influx_writer: InfluxWriter | None = None
         self._transformer_registry: TransformerRegistry | None = None
         self._archiver: RawArchiver | None = None
@@ -128,6 +130,16 @@ class HealthIngestService:
         )
         await self._mqtt_handler.connect()
 
+        # Initialize and start HTTP handler (if enabled)
+        if self._settings.http.enabled:
+            self._http_handler = HTTPHandler(
+                settings=self._settings.http,
+                message_callback=self._enqueue_message,
+                archiver=self._archiver,
+                dlq=self._dlq,
+            )
+            await self._http_handler.start()
+
         # Start internal watchdog for periodic health monitoring
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
@@ -156,6 +168,9 @@ class HealthIngestService:
                     pass
 
         # Stop accepting new messages first
+        if self._http_handler:
+            await self._http_handler.stop()
+
         if self._mqtt_handler:
             await self._mqtt_handler.disconnect()
 
@@ -425,6 +440,9 @@ class HealthIngestService:
             result["mqtt"] = {
                 "connected": self._mqtt_handler.is_connected(),
             }
+
+        if self._http_handler:
+            result["http"] = {"enabled": True}
 
         if self._influx_writer:
             result["influxdb"] = await self._influx_writer.health_check()

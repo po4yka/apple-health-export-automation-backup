@@ -2,7 +2,7 @@
 # Apple Health Backup & Analysis System - Docker Compose Stack
 # =============================================================================
 # Services:
-#   - health-ingest: MQTT subscriber that transforms and writes to InfluxDB
+#   - health-ingest: MQTT + REST API ingestion, transforms and writes to InfluxDB
 #   - influxdb: Time-series database for storing health metrics
 #   - grafana: Visualization dashboards
 #
@@ -13,6 +13,7 @@
 #   Rebuild: docker compose build --no-cache
 #
 # Ports:
+#   - 8084: Health Ingest REST API (http://localhost:8084)
 #   - 8087: InfluxDB (http://localhost:8087)
 #   - 3050: Grafana  (http://localhost:3050)
 # =============================================================================
@@ -46,6 +47,12 @@ services:
       - MQTT_CLEAN_SESSION=${MQTT_CLEAN_SESSION:-true}
       - MQTT_RECONNECT_DELAY_MIN=${MQTT_RECONNECT_DELAY_MIN:-1.0}
       - MQTT_RECONNECT_DELAY_MAX=${MQTT_RECONNECT_DELAY_MAX:-60.0}
+      # HTTP ingestion API settings
+      - HTTP_ENABLED=${HTTP_ENABLED:-true}
+      - HTTP_HOST=${HTTP_HOST:-0.0.0.0}
+      - HTTP_PORT=${HTTP_PORT:-8080}
+      - HTTP_AUTH_TOKEN=${HTTP_AUTH_TOKEN:-}
+      - HTTP_MAX_REQUEST_SIZE=${HTTP_MAX_REQUEST_SIZE:-10485760}
       # InfluxDB settings - connects to influxdb service
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
@@ -74,8 +81,11 @@ services:
       - DLQ_MAX_ENTRIES=${DLQ_MAX_ENTRIES:-10000}
       - DLQ_RETENTION_DAYS=${DLQ_RETENTION_DAYS:-30}
       - DLQ_MAX_RETRIES=${DLQ_MAX_RETRIES:-3}
+    ports:
+      # HTTP ingestion API (mapped to 8084 externally to avoid conflicts)
+      - "${HTTP_PORT_EXTERNAL:-8084}:${HTTP_PORT:-8080}"
     healthcheck:
-      test: ["CMD", "uv", "run", "health-check"]
+      test: ["CMD", "health-check"]
       interval: 30s
       timeout: 15s
       retries: 3
@@ -83,7 +93,6 @@ services:
     restart: unless-stopped
     networks:
       - health-network
-    # Note: No ports exposed - this service only connects outbound to MQTT and InfluxDB
 
   # ---------------------------------------------------------------------------
   # InfluxDB - Time-Series Database
