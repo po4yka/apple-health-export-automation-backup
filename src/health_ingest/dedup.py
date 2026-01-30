@@ -90,6 +90,10 @@ class DeduplicationCache:
             True if point is a duplicate, False otherwise.
         """
         key = self.compute_key(point)
+        return self._is_duplicate_key(key)
+
+    def _is_duplicate_key(self, key: str) -> bool:
+        """Check duplicate status by precomputed key."""
         now = time.time()
 
         with self._lock:
@@ -162,8 +166,13 @@ class DeduplicationCache:
             List of non-duplicate points.
         """
         result = []
+        seen: set[str] = set()
         for point in points:
-            if not self.is_duplicate(point):
+            key = self.compute_key(point)
+            if key in seen:
+                continue
+            if not self._is_duplicate_key(key):
+                seen.add(key)
                 result.append(point)
         return result
 
@@ -171,6 +180,10 @@ class DeduplicationCache:
         """Persist cache to SQLite for restart recovery."""
         if not self._persist_path:
             return
+
+        # Snapshot under lock on the event loop thread (fast, no I/O)
+        with self._lock:
+            entries = list(self._cache.items())
 
         loop = asyncio.get_running_loop()
 
@@ -185,12 +198,8 @@ class DeduplicationCache:
                     )
                 """)
 
-                # Clear and repopulate
+                # Clear and repopulate atomically (within transaction)
                 conn.execute("DELETE FROM dedup_cache")
-
-                with self._lock:
-                    entries = list(self._cache.items())
-
                 conn.executemany(
                     "INSERT INTO dedup_cache (key, timestamp) VALUES (?, ?)",
                     entries,

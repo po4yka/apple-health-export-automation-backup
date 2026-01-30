@@ -65,9 +65,29 @@ class TransformerRegistry:
         Returns:
             List of InfluxDB Point objects.
         """
-        # Determine metric name from data
-        metric_name = self._extract_metric_name(data)
+        # If this is a batch payload, route each item individually
+        if "data" in data and isinstance(data["data"], list):
+            base = {k: v for k, v in data.items() if k != "data"}
+            points: list = []
 
+            for item in data["data"]:
+                if not isinstance(item, dict):
+                    logger.warning("invalid_metric_item", item_type=type(item).__name__)
+                    continue
+
+                merged = {**base, **item}
+                metric_name = self._extract_metric_name(merged)
+                if not metric_name:
+                    logger.warning("no_metric_name_found", data_keys=list(merged.keys()))
+                    continue
+
+                transformer = self.get_transformer(metric_name)
+                points.extend(transformer.transform(merged))
+
+            return points
+
+        # Single payload
+        metric_name = self._extract_metric_name(data)
         if not metric_name:
             logger.warning("no_metric_name_found", data_keys=list(data.keys()))
             return []

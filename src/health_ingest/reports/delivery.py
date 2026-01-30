@@ -1,12 +1,18 @@
 """Report delivery via Clawdbot gateway."""
 
-import asyncio
 from datetime import UTC, datetime
 
 import httpx
 import structlog
+from tenacity import (
+    AsyncRetrying,
+    retry_if_not_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config import ClawdbotSettings
+from ..metrics import REPORT_DELIVERIES
 from .models import DeliveryResult
 
 logger = structlog.get_logger(__name__)
@@ -61,49 +67,61 @@ class ClawdbotDelivery:
             "sessionKey": f"health-report:{week_id}",
         }
 
-        for attempt in range(1, self._settings.max_retries + 1):
-            try:
+        attempt = 0
+        try:
+            result = await self._send_with_retries(payload)
+            REPORT_DELIVERIES.labels(status="success").inc()
+            return result
+        except DeliveryAuthError:
+            logger.error("clawdbot_auth_failed")
+            REPORT_DELIVERIES.labels(status="auth_error").inc()
+            return DeliveryResult(
+                success=False,
+                attempt=attempt,
+                error="Authentication failed",
+            )
+        except Exception as e:
+            logger.error(
+                "delivery_failed_final",
+                attempts=self._settings.max_retries,
+                report_length=len(report),
+                error=str(e),
+            )
+            REPORT_DELIVERIES.labels(status="failed").inc()
+            return DeliveryResult(
+                success=False,
+                attempt=self._settings.max_retries,
+                error="All delivery attempts failed",
+            )
+
+    async def _send_with_retries(self, payload: dict) -> DeliveryResult:
+        """Send with tenacity-managed retries.
+
+        Retry logic is configured dynamically from settings to allow
+        tenacity's decorator-style to work with instance settings.
+        """
+        attempt = 0
+        async for attempt_state in AsyncRetrying(
+            stop=stop_after_attempt(self._settings.max_retries),
+            wait=wait_exponential(
+                multiplier=self._settings.retry_delay_seconds,
+                min=self._settings.retry_delay_seconds,
+                max=60,
+            ),
+            retry=retry_if_not_exception_type(DeliveryAuthError),
+            reraise=True,
+        ):
+            with attempt_state:
+                attempt = attempt_state.retry_state.attempt_number
                 result = await self._attempt_send(payload, attempt)
-                if result.success:
-                    return result
-
-                # Check for auth errors - don't retry
-                if result.error and "auth" in result.error.lower():
-                    logger.error("clawdbot_auth_failed")
-                    return result
-
-            except DeliveryAuthError:
-                logger.error("clawdbot_auth_failed")
-                return DeliveryResult(
-                    success=False,
-                    attempt=attempt,
-                    error="Authentication failed",
-                )
-            except Exception as e:
-                logger.warning(
-                    "delivery_attempt_failed",
-                    attempt=attempt,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-
-            # Wait before retry with exponential backoff
-            if attempt < self._settings.max_retries:
-                delay = self._settings.retry_delay_seconds * (2 ** (attempt - 1))
-                logger.debug("delivery_retry_wait", delay=delay, attempt=attempt)
-                await asyncio.sleep(delay)
-
-        # All retries exhausted
-        logger.error(
-            "delivery_failed_final",
-            attempts=self._settings.max_retries,
-            report_length=len(report),
-        )
-        return DeliveryResult(
-            success=False,
-            attempt=self._settings.max_retries,
-            error="All delivery attempts failed",
-        )
+                if not result.success:
+                    # Check for auth errors - don't retry
+                    if result.error and "auth" in result.error.lower():
+                        raise DeliveryAuthError(result.error)
+                    raise RuntimeError(result.error or "Delivery failed")
+                return result
+        # Should not reach here, but satisfy type checker
+        return DeliveryResult(success=False, attempt=attempt, error="Retries exhausted")
 
     async def _attempt_send(self, payload: dict, attempt: int) -> DeliveryResult:
         """Attempt a single delivery.

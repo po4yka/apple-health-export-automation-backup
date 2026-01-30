@@ -15,7 +15,7 @@ from .config import MQTTSettings
 
 if TYPE_CHECKING:
     from .archive import RawArchiver
-    from .dlq import DeadLetterQueue
+    from .dlq import DeadLetterQueue, DLQCategory
 
 logger = structlog.get_logger(__name__)
 
@@ -83,6 +83,35 @@ class MQTTHandler:
         if self._loop:
             self._loop.call_soon_threadsafe(self._connected.clear)
 
+    def _schedule_dlq_enqueue(
+        self,
+        category: DLQCategory,
+        topic: str,
+        payload: bytes,
+        error: Exception,
+        archive_id: str | None,
+    ) -> None:
+        """Schedule a DLQ enqueue on the event loop with error logging."""
+        future = asyncio.run_coroutine_threadsafe(
+            self._dlq.enqueue(
+                category=category,
+                topic=topic,
+                payload=payload,
+                error=error,
+                archive_id=archive_id,
+            ),
+            self._loop,
+        )
+        future.add_done_callback(self._dlq_enqueue_done)
+
+    def _dlq_enqueue_done(self, future: asyncio.Future) -> None:
+        """Callback for DLQ enqueue completion."""
+        if future.exception():
+            logger.error(
+                "dlq_enqueue_failed",
+                error=str(future.exception()),
+            )
+
     def _on_message(
         self,
         client: mqtt.Client,
@@ -139,17 +168,12 @@ class MQTTHandler:
             if self._dlq and self._loop:
                 from .dlq import DLQCategory
 
-                error = e
-                self._loop.call_soon_threadsafe(
-                    lambda t=topic, p=raw_payload, err=error, a=archive_id: asyncio.create_task(
-                        self._dlq.enqueue(
-                            category=DLQCategory.UNICODE_DECODE_ERROR,
-                            topic=t,
-                            payload=p,
-                            error=err,
-                            archive_id=a,
-                        )
-                    )
+                self._schedule_dlq_enqueue(
+                    category=DLQCategory.UNICODE_DECODE_ERROR,
+                    topic=topic,
+                    payload=raw_payload,
+                    error=e,
+                    archive_id=archive_id,
                 )
         except json.JSONDecodeError as e:
             logger.error(
@@ -162,18 +186,12 @@ class MQTTHandler:
             if self._dlq and self._loop:
                 from .dlq import DLQCategory
 
-                # Capture variables for lambda closure
-                error = e
-                self._loop.call_soon_threadsafe(
-                    lambda t=topic, p=raw_payload, err=error, a=archive_id: asyncio.create_task(
-                        self._dlq.enqueue(
-                            category=DLQCategory.JSON_PARSE_ERROR,
-                            topic=t,
-                            payload=p,
-                            error=err,
-                            archive_id=a,
-                        )
-                    )
+                self._schedule_dlq_enqueue(
+                    category=DLQCategory.JSON_PARSE_ERROR,
+                    topic=topic,
+                    payload=raw_payload,
+                    error=e,
+                    archive_id=archive_id,
                 )
         except Exception as e:
             logger.exception(

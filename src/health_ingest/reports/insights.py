@@ -1,5 +1,6 @@
 """AI insight generation with rule-based fallback."""
 
+import asyncio
 import json
 
 import anthropic
@@ -89,6 +90,12 @@ class InsightEngine:
                 logger.warning("ai_rate_limit", error=str(e))
             except anthropic.APIStatusError as e:
                 logger.warning("ai_api_error", status=e.status_code, error=str(e))
+            except anthropic.APITimeoutError as e:
+                logger.warning(
+                    "ai_timeout",
+                    error=str(e),
+                    timeout=self._insight_settings.ai_timeout_seconds,
+                )
             except Exception as e:
                 logger.warning("ai_unexpected_error", error=str(e), error_type=type(e).__name__)
 
@@ -112,13 +119,25 @@ class InsightEngine:
             max_insights=self._insight_settings.max_insights,
         )
 
-        client = anthropic.Anthropic(api_key=self._anthropic_settings.api_key)
+        def do_request():
+            client = anthropic.Anthropic(
+                api_key=self._anthropic_settings.api_key,
+                timeout=self._insight_settings.ai_timeout_seconds,
+            )
+            return client.messages.create(
+                model=self._anthropic_settings.model,
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
 
-        message = client.messages.create(
-            model=self._anthropic_settings.model,
-            max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        try:
+            message = await asyncio.wait_for(
+                asyncio.to_thread(do_request),
+                timeout=self._insight_settings.ai_timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning("ai_timeout", timeout=self._insight_settings.ai_timeout_seconds)
+            return []
 
         response_text = message.content[0].text.strip()
 

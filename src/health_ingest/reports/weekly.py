@@ -62,6 +62,7 @@ class WeeklyReportGenerator:
         self,
         influxdb_settings: InfluxDBSettings,
         anthropic_settings: AnthropicSettings,
+        ai_timeout_seconds: float = 30.0,
     ) -> None:
         """Initialize the report generator.
 
@@ -71,6 +72,7 @@ class WeeklyReportGenerator:
         """
         self._influxdb_settings = influxdb_settings
         self._anthropic_settings = anthropic_settings
+        self._ai_timeout_seconds = ai_timeout_seconds
         self._influx_client: InfluxDBClientAsync | None = None
 
     async def connect(self) -> None:
@@ -342,13 +344,25 @@ Health Metrics Summary:
 Provide your analysis in 3-4 paragraphs. Be specific and reference the actual numbers."""
 
         try:
-            client = anthropic.Anthropic(api_key=self._anthropic_settings.api_key)
-            message = client.messages.create(
-                model=self._anthropic_settings.model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
+            def do_request():
+                client = anthropic.Anthropic(
+                    api_key=self._anthropic_settings.api_key,
+                    timeout=self._ai_timeout_seconds,
+                )
+                return client.messages.create(
+                    model=self._anthropic_settings.model,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+            message = await asyncio.wait_for(
+                asyncio.to_thread(do_request),
+                timeout=self._ai_timeout_seconds,
             )
             return message.content[0].text
+        except TimeoutError:
+            logger.error("ai_insight_timeout", timeout=self._ai_timeout_seconds)
+            return "AI insights unavailable: request timed out"
         except Exception as e:
             logger.error("ai_insight_generation_failed", error=str(e))
             return f"AI insights unavailable: {e}"
@@ -533,6 +547,7 @@ async def generate_and_send_report(
     generator = WeeklyReportGenerator(
         influxdb_settings=settings.influxdb,
         anthropic_settings=settings.anthropic,
+        ai_timeout_seconds=settings.insight.ai_timeout_seconds,
     )
 
     await generator.connect()
@@ -625,6 +640,7 @@ async def main():
     generator = WeeklyReportGenerator(
         influxdb_settings=settings.influxdb,
         anthropic_settings=settings.anthropic,
+        ai_timeout_seconds=settings.insight.ai_timeout_seconds,
     )
 
     await generator.connect()

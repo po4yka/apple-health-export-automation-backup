@@ -6,13 +6,26 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from prometheus_client import start_http_server as start_metrics_server
 
 from .archive import RawArchiver
+from .circuit_breaker import CircuitState
 from .config import get_settings
 from .dedup import DeduplicationCache
 from .dlq import DeadLetterQueue, DLQCategory
 from .influx_writer import InfluxWriter
 from .logging import setup_logging
+from .metrics import (
+    CIRCUIT_BREAKER_STATE,
+    CIRCUIT_BREAKER_TRIPS,
+    DEDUP_CACHE_SIZE,
+    DUPLICATES_FILTERED,
+    MESSAGES_FAILED,
+    MESSAGES_PROCESSED,
+    MQTT_CONNECTED,
+    QUEUE_DEPTH,
+    SERVICE_INFO,
+)
 from .mqtt_handler import MQTTHandler
 from .transformers import TransformerRegistry
 
@@ -43,10 +56,12 @@ class HealthIngestService:
         self._message_queue: asyncio.Queue[tuple[str, dict[str, Any], str | None]] | None = None
         self._worker_tasks: list[asyncio.Task] = []
         self._checkpoint_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Start the ingestion service."""
         logger.info("service_starting", version="0.1.0")
+        SERVICE_INFO.info({"version": "0.1.0", "python": "3.13"})
 
         # Initialize transformer registry
         self._transformer_registry = TransformerRegistry(
@@ -113,6 +128,13 @@ class HealthIngestService:
         )
         await self._mqtt_handler.connect()
 
+        # Start internal watchdog for periodic health monitoring
+        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+
+        # Start Prometheus metrics HTTP server (non-blocking)
+        start_metrics_server(port=9090)
+        logger.info("prometheus_metrics_started", port=9090)
+
         logger.info("service_started")
 
     async def stop(self) -> None:
@@ -124,13 +146,14 @@ class HealthIngestService:
             workers=len(self._worker_tasks),
         )
 
-        # Stop checkpoint task
-        if self._checkpoint_task:
-            self._checkpoint_task.cancel()
-            try:
-                await self._checkpoint_task
-            except asyncio.CancelledError:
-                pass
+        # Stop watchdog and checkpoint tasks
+        for task in (self._watchdog_task, self._checkpoint_task):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         # Stop accepting new messages first
         if self._mqtt_handler:
@@ -162,18 +185,6 @@ class HealthIngestService:
             total_duplicates_filtered=self._duplicate_count,
         )
 
-    def _handle_message(
-        self, topic: str, payload: dict[str, Any], archive_id: str | None
-    ) -> None:
-        """Handle incoming MQTT message.
-
-        Args:
-            topic: MQTT topic the message was received on.
-            payload: Parsed JSON payload.
-            archive_id: Archive entry ID for correlation.
-        """
-        asyncio.create_task(self._enqueue_message(topic, payload, archive_id))
-
     async def _enqueue_message(
         self, topic: str, payload: dict[str, Any], archive_id: str | None
     ) -> None:
@@ -196,10 +207,13 @@ class HealthIngestService:
 
             try:
                 await self._process_message(topic, payload, archive_id)
+                MESSAGES_PROCESSED.inc()
             except Exception as e:
+                MESSAGES_FAILED.labels(error_type=type(e).__name__).inc()
                 logger.exception("worker_error", worker_id=worker_id, error=str(e))
             finally:
                 self._message_queue.task_done()
+                QUEUE_DEPTH.set(self._message_queue.qsize())
 
     async def _process_message(
         self, topic: str, payload: dict[str, Any], archive_id: str | None
@@ -249,6 +263,7 @@ class HealthIngestService:
                 filtered = original_count - len(points)
                 if filtered > 0:
                     self._duplicate_count += filtered
+                    DUPLICATES_FILTERED.inc(filtered)
                     logger.debug(
                         "duplicates_filtered",
                         topic=topic,
@@ -323,6 +338,65 @@ class HealthIngestService:
                 break
             except Exception as e:
                 logger.error("checkpoint_error", error=str(e))
+
+    async def _watchdog_loop(self) -> None:
+        """Periodic internal health monitoring.
+
+        Checks MQTT connection, InfluxDB circuit breaker, and queue depth.
+        Updates Prometheus gauges for external monitoring.
+        """
+        while True:
+            try:
+                await asyncio.sleep(30.0)
+
+                # MQTT connection status
+                if self._mqtt_handler:
+                    connected = self._mqtt_handler.is_connected()
+                    MQTT_CONNECTED.set(1 if connected else 0)
+                    if not connected:
+                        logger.warning("watchdog_mqtt_disconnected")
+
+                # InfluxDB circuit breaker status
+                if self._influx_writer:
+                    cb = self._influx_writer.circuit_breaker
+                    state = cb.state
+                    state_val = {
+                        CircuitState.CLOSED: 0,
+                        CircuitState.OPEN: 1,
+                        CircuitState.HALF_OPEN: 2,
+                    }[state]
+                    CIRCUIT_BREAKER_STATE.labels(name="influxdb").set(state_val)
+                    stats = cb.get_stats()
+                    CIRCUIT_BREAKER_TRIPS.labels(name="influxdb")._value.set(
+                        stats["total_trips"]
+                    )
+                    if state != CircuitState.CLOSED:
+                        logger.warning(
+                            "watchdog_influxdb_circuit",
+                            state=state.value,
+                            failures=stats["failure_count"],
+                        )
+
+                # Queue depth
+                if self._message_queue:
+                    depth = self._message_queue.qsize()
+                    QUEUE_DEPTH.set(depth)
+                    if depth > MAX_QUEUE_SIZE * 0.8:
+                        logger.warning(
+                            "watchdog_queue_high",
+                            depth=depth,
+                            max=MAX_QUEUE_SIZE,
+                        )
+
+                # Dedup cache size
+                if self._dedup_cache:
+                    stats = self._dedup_cache.get_stats()
+                    DEDUP_CACHE_SIZE.set(stats["size"])
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("watchdog_error", error=str(e))
 
     async def run_until_shutdown(self) -> None:
         """Run the service until shutdown signal received."""
@@ -424,7 +498,7 @@ def health_check_cli() -> None:
                 org=settings.influxdb.org,
             )
             try:
-                ready = await client.ping()
+                ready = await asyncio.wait_for(client.ping(), timeout=5.0)
                 if not ready:
                     print("InfluxDB ping failed")
                     return False
