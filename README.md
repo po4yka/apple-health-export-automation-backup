@@ -1,10 +1,10 @@
 # Apple Health Backup & Analysis System
 
-A self-hosted system to backup, store, and analyze Apple Health data exported from the [Health Auto Export](https://apps.apple.com/app/health-auto-export-json-csv/id1115567069) iOS app. Data flows via MQTT to InfluxDB for time-series storage, with Grafana dashboards for visualization and AI-powered weekly health insights.
+A self-hosted system to backup, store, and analyze Apple Health data exported from the [Health Auto Export](https://apps.apple.com/app/health-auto-export-json-csv/id1115567069) iOS app. Data flows via REST API (or MQTT) to InfluxDB for time-series storage, with Grafana dashboards for visualization and AI-powered weekly health insights.
 
 ## Features
 
-- **Automated Data Ingestion**: Receives health data via MQTT from Health Auto Export app
+- **Automated Data Ingestion**: Receives health data via REST API or MQTT from Health Auto Export app
 - **Resilient Ingestion**: Backpressure with bounded queue, raw payload archiving, deduplication, and DLQ handling
 - **Time-Series Storage**: Stores all metrics in InfluxDB 2.x with infinite retention
 - **Rich Dashboards**: Pre-configured Grafana dashboards for activity, heart rate, sleep, workouts, and vitals
@@ -15,22 +15,23 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 ## Architecture
 
 ```
-┌─────────────────────┐     MQTT (23:00 daily)     ┌──────────────────────┐
-│  Health Auto Export │ ──────────────────────────▶│  Mosquitto Broker    │
-│  (iPhone)           │                            │  (port 1883)         │
+                          REST API (recommended)
+┌─────────────────────┐  POST /ingest via HTTPS    ┌──────────────────────┐
+│  Health Auto Export │ ──────────────────────────▶│  Cloudflare Tunnel   │
+│  (iPhone)           │                            │                      │
 └─────────────────────┘                            └──────────┬───────────┘
                                                               │
                                                               ▼
-┌─────────────────────┐     InfluxDB Query         ┌──────────────────────┐
-│  Grafana            │◀───────────────────────────│  health-ingest       │
-│  (port 3050)        │                            │  (Python 3.13)       │
-└─────────┬───────────┘                            └──────────┬───────────┘
-          │                                                   │
-          │ health.example.com                                 ▼
-          │                                        ┌──────────────────────┐
-┌─────────▼───────────┐                            │  InfluxDB 2.x        │
-│  Cloudflare Tunnel  │                            │  (port 8087)         │
-└─────────────────────┘                            └──────────────────────┘
+                                                   ┌──────────────────────┐
+                                                   │  health-ingest       │
+                                                   │  HTTP :8084 + MQTT   │
+                                                   └──────────┬───────────┘
+                                                              │
+┌─────────────────────┐     InfluxDB Query                    ▼
+│  Grafana            │◀──────────────────────────┌──────────────────────┐
+│  (port 3050)        │                           │  InfluxDB 2.x        │
+│  health.example.com  │                           │  (port 8087)         │
+└─────────────────────┘                           └──────────────────────┘
 ```
 
 ## Prerequisites
@@ -38,8 +39,8 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 - **Docker** and **Docker Compose** v2+
 - **Python 3.13+** (for local development)
 - **[uv](https://github.com/astral-sh/uv)** package manager (for local development)
-- **MQTT Broker** (Mosquitto) - can use existing broker or deploy separately
 - **Health Auto Export** iOS app (paid, ~$3)
+- **MQTT Broker** (optional, only needed if using MQTT transport instead of REST API)
 - **Anthropic API key** (optional, for AI-powered weekly reports)
 
 ## Quick Start
@@ -96,10 +97,28 @@ docker logs -f health-ingest
 
 ## Health Auto Export Configuration
 
-Configure the iOS app to send data via MQTT:
+### Option A: REST API (Recommended)
+
+Configure the iOS app to send data via REST API through Cloudflare Tunnel:
 
 1. Open **Health Auto Export** app on your iPhone
-2. Go to **Settings** → **Automations**
+2. Go to **Settings** -> **Automations**
+3. Create a new automation:
+   - **Trigger**: Daily at 23:00 (or your preferred time)
+   - **Export Format**: JSON
+   - **Destination**: REST API
+4. Configure REST API settings:
+   - **URL**: `https://health-api.yourdomain.com/ingest`
+   - **Method**: POST
+   - **Headers**: `Authorization: Bearer <your-HTTP_AUTH_TOKEN>`
+5. Select metrics to export (see list below)
+
+### Option B: MQTT
+
+Configure the iOS app to send data via MQTT (requires a broker):
+
+1. Open **Health Auto Export** app on your iPhone
+2. Go to **Settings** -> **Automations**
 3. Create a new automation:
    - **Trigger**: Daily at 23:00 (or your preferred time)
    - **Export Format**: JSON
@@ -109,7 +128,10 @@ Configure the iOS app to send data via MQTT:
    - **Port**: `1883`
    - **Topic**: `health/export`
    - **Username/Password**: If your broker requires authentication
-5. Select metrics to export:
+5. Select metrics to export (see list below)
+
+### Recommended Metrics
+
    - Heart Rate, Resting Heart Rate, HRV
    - Steps, Active Energy, Exercise Time
    - Sleep Analysis
@@ -121,7 +143,7 @@ Configure the iOS app to send data via MQTT:
 
 | Service | Container | Port | Description |
 |---------|-----------|------|-------------|
-| health-ingest | `health-ingest` | - | MQTT subscriber, transforms and writes to InfluxDB |
+| health-ingest | `health-ingest` | 8084 | REST API + MQTT ingestion, transforms and writes to InfluxDB |
 | InfluxDB | `health-influxdb` | 8087 | Time-series database for health metrics |
 | Grafana | `health-grafana` | 3050 | Visualization dashboards |
 
@@ -199,6 +221,19 @@ uv run ruff check src/ --fix
 uv run ruff format src/
 ```
 
+### Local REST API Testing
+
+```bash
+# Send test data via REST API
+curl -X POST http://localhost:8084/ingest \
+  -H "Authorization: Bearer <your-HTTP_AUTH_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"data":[{"name":"heart_rate","date":"2024-01-15T10:30:00+00:00","qty":72,"source":"Apple Watch","units":"bpm"}]}'
+
+# Check HTTP health endpoint
+curl http://localhost:8084/health
+```
+
 ### Local MQTT Testing
 
 ```bash
@@ -230,6 +265,7 @@ apple-health-export-automation-backup/
 │       ├── main.py             # Application entry point
 │       ├── config.py           # Pydantic settings
 │       ├── logging.py          # Structured logging setup
+│       ├── http_handler.py     # REST API ingestion endpoint
 │       ├── mqtt_handler.py     # MQTT subscription and routing
 │       ├── influx_writer.py    # Async batch writes to InfluxDB
 │       ├── archive.py          # Raw payload archiver
@@ -250,6 +286,7 @@ apple-health-export-automation-backup/
 ├── tests/
 │   ├── conftest.py             # Pytest fixtures
 │   ├── test_transformers.py    # Transformer unit tests
+│   ├── test_http_handler.py    # HTTP handler tests
 │   ├── test_mqtt_handler.py    # MQTT handler tests
 │   └── test_influx_writer.py   # Influx writer buffer tests
 └── grafana/
@@ -267,6 +304,11 @@ apple-health-export-automation-backup/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `HTTP_ENABLED` | `true` | Enable HTTP REST API ingestion endpoint |
+| `HTTP_PORT` | `8080` | HTTP server port (inside container) |
+| `HTTP_PORT_EXTERNAL` | `8084` | Host port mapped to HTTP_PORT |
+| `HTTP_AUTH_TOKEN` | - | Bearer token for HTTP authentication |
+| `HTTP_MAX_REQUEST_SIZE` | `10485760` | Maximum request body size in bytes |
 | `MQTT_HOST` | `192.168.1.175` | MQTT broker hostname |
 | `MQTT_PORT` | `1883` | MQTT broker port |
 | `MQTT_USERNAME` | - | MQTT authentication username |
@@ -303,9 +345,13 @@ apple-health-export-automation-backup/
    docker logs -f health-ingest
    ```
 
-2. Verify MQTT connectivity:
+2. Test the REST API endpoint:
    ```bash
-   mosquitto_sub -h YOUR_BROKER_IP -t "health/export/#" -v
+   curl -s http://localhost:8084/health
+   curl -X POST http://localhost:8084/ingest \
+     -H "Authorization: Bearer <token>" \
+     -H "Content-Type: application/json" \
+     -d '{"data":[{"name":"heart_rate","date":"2024-01-15T10:30:00Z","qty":72}]}'
    ```
 
 3. Check InfluxDB has data:
@@ -316,8 +362,8 @@ apple-health-export-automation-backup/
 
 ### Health Auto Export not sending data
 
-1. Ensure your phone and server are on the same network
-2. Check MQTT broker is accessible from your phone
+1. **REST API**: Verify the URL and Bearer token are correct in the iOS app settings
+2. **MQTT**: Ensure your phone and server are on the same network
 3. Verify automation is enabled and scheduled correctly
 4. Try manual export to test connectivity
 
@@ -340,11 +386,11 @@ apple-health-export-automation-backup/
 
 ## Cloudflare Tunnel Setup (Optional)
 
-To expose Grafana publicly via Cloudflare:
+To expose services publicly via Cloudflare:
 
-1. Add route in [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/):
-   - **Hostname**: `health.yourdomain.com`
-   - **Service**: `http://localhost:3050`
+1. Add routes in [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/):
+   - **Hostname**: `health.yourdomain.com` -> `http://localhost:3050` (Grafana)
+   - **Hostname**: `health-api.yourdomain.com` -> `http://localhost:8084` (REST API)
 
 2. Configure Grafana root URL in `.env`:
    ```

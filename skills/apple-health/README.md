@@ -61,7 +61,7 @@ export CLAWDBOT_HOOKS_TOKEN="..."       # For Telegram delivery
 | Command | Description |
 |---------|-------------|
 | `health-query` | Ad-hoc InfluxDB queries for health data |
-| `health-ingest` | Main MQTT ingestion service |
+| `health-ingest` | Main ingestion service (REST API + MQTT) |
 | `health-check` | Verify InfluxDB connectivity |
 | `health-report` | Generate weekly report to stdout |
 | `health-report-send` | Generate and send report via Telegram |
