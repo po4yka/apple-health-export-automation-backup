@@ -1,6 +1,7 @@
 """Raw MQTT payload archiver for disaster recovery."""
 
 import asyncio
+import functools
 import gzip
 import json
 import os
@@ -179,12 +180,14 @@ class RawArchiver:
 
     async def _read_jsonl(self, path: Path) -> AsyncIterator[dict[str, Any]]:
         """Stream entries from a JSONL file."""
-        async for entry in self._stream_jsonl(path, lambda p: open(p, encoding="utf-8")):
+        opener = functools.partial(open, encoding="utf-8")
+        async for entry in self._stream_jsonl(path, opener):
             yield entry
 
     async def _read_gzip(self, path: Path) -> AsyncIterator[dict[str, Any]]:
         """Stream entries from a gzipped JSONL file."""
-        async for entry in self._stream_jsonl(path, lambda p: gzip.open(p, "rt", encoding="utf-8")):
+        opener = functools.partial(gzip.open, mode="rt", encoding="utf-8")
+        async for entry in self._stream_jsonl(path, opener):
             yield entry
 
     async def _stream_jsonl(

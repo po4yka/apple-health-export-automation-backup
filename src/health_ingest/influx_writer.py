@@ -11,7 +11,15 @@ from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 from influxdb_client.client.write_api_async import WriteApiAsync
 from influxdb_client.rest import ApiException
 
+from .circuit_breaker import CircuitBreaker
 from .config import InfluxDBSettings
+from .metrics import (
+    INFLUX_BUFFER_SIZE,
+    INFLUX_POINTS_DROPPED,
+    INFLUX_POINTS_WRITTEN,
+    INFLUX_WRITE_DURATION,
+    INFLUX_WRITES,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -44,6 +52,16 @@ class InfluxWriter:
         self._max_retries = 3
         self._retry_delay = 1.0  # seconds
         self._dropped_points = 0  # Counter for dropped points due to buffer overflow
+        self._circuit_breaker = CircuitBreaker(
+            name="influxdb",
+            failure_threshold=5,
+            recovery_timeout=30.0,
+        )
+
+    @property
+    def circuit_breaker(self) -> CircuitBreaker:
+        """Get the circuit breaker instance."""
+        return self._circuit_breaker
 
     async def connect(self) -> None:
         """Connect to InfluxDB."""
@@ -61,7 +79,7 @@ class InfluxWriter:
         )
 
         # Verify connection
-        ready = await self._client.ping()
+        ready = await asyncio.wait_for(self._client.ping(), timeout=10.0)
         if not ready:
             raise ConnectionError("InfluxDB is not ready")
 
@@ -103,6 +121,7 @@ class InfluxWriter:
         async with self._buffer_lock:
             self._buffer.extend(points)
             buffer_size = len(self._buffer)
+            INFLUX_BUFFER_SIZE.set(buffer_size)
 
         logger.debug("points_buffered", count=len(points), buffer_size=buffer_size)
 
@@ -118,14 +137,41 @@ class InfluxWriter:
 
             points_to_write = self._buffer.copy()
             self._buffer.clear()
+        INFLUX_BUFFER_SIZE.set(0)
 
         if not points_to_write:
+            return
+
+        # Circuit breaker check — fail fast if InfluxDB is unreachable
+        if self._circuit_breaker.is_open:
+            # Re-add to buffer instead of dropping
+            async with self._buffer_lock:
+                new_size = len(self._buffer) + len(points_to_write)
+                if new_size <= MAX_BUFFER_SIZE:
+                    self._buffer = points_to_write + self._buffer
+                    INFLUX_BUFFER_SIZE.set(len(self._buffer))
+                else:
+                    overflow = new_size - MAX_BUFFER_SIZE
+                    self._dropped_points += overflow
+                    INFLUX_POINTS_DROPPED.labels(reason="circuit_open").inc(overflow)
+                    combined = points_to_write + self._buffer
+                    self._buffer = combined[-MAX_BUFFER_SIZE:]
+                    INFLUX_BUFFER_SIZE.set(len(self._buffer))
+            logger.warning(
+                "influx_circuit_open_buffered",
+                count=len(points_to_write),
+                state=self._circuit_breaker.state.value,
+            )
             return
 
         # Retry logic with error type differentiation
         for attempt in range(self._max_retries):
             try:
-                await self._write_batch(points_to_write)
+                with INFLUX_WRITE_DURATION.time():
+                    await self._write_batch(points_to_write)
+                self._circuit_breaker.record_success()
+                INFLUX_WRITES.labels(status="success").inc()
+                INFLUX_POINTS_WRITTEN.inc(len(points_to_write))
                 logger.info("points_written", count=len(points_to_write))
                 return
             except NON_RETRYABLE_EXCEPTIONS as e:
@@ -137,6 +183,8 @@ class InfluxWriter:
                     error_type=type(e).__name__,
                 )
                 self._dropped_points += len(points_to_write)
+                INFLUX_WRITES.labels(status="non_retryable").inc()
+                INFLUX_POINTS_DROPPED.labels(reason="non_retryable").inc(len(points_to_write))
                 return
             except ApiException as e:
                 # Check for auth errors (401, 403) - don't retry
@@ -148,8 +196,11 @@ class InfluxWriter:
                         error=str(e),
                     )
                     self._dropped_points += len(points_to_write)
+                    INFLUX_WRITES.labels(status="auth_error").inc()
+                    INFLUX_POINTS_DROPPED.labels(reason="auth_error").inc(len(points_to_write))
                     return
                 # Other API errors - retry
+                self._circuit_breaker.record_failure()
                 logger.warning(
                     "write_failed",
                     attempt=attempt + 1,
@@ -161,6 +212,7 @@ class InfluxWriter:
                     await asyncio.sleep(self._retry_delay * (attempt + 1))
             except Exception as e:
                 # Network/transient errors - retry
+                self._circuit_breaker.record_failure()
                 logger.warning(
                     "write_failed",
                     attempt=attempt + 1,
@@ -172,6 +224,7 @@ class InfluxWriter:
                     await asyncio.sleep(self._retry_delay * (attempt + 1))
 
         # All retries exhausted - try to re-add to buffer with overflow protection
+        INFLUX_WRITES.labels(status="exhausted").inc()
         logger.error(
             "write_failed_permanently",
             count=len(points_to_write),
@@ -180,6 +233,7 @@ class InfluxWriter:
             new_size = len(self._buffer) + len(points_to_write)
             if new_size <= MAX_BUFFER_SIZE:
                 self._buffer = points_to_write + self._buffer
+                INFLUX_BUFFER_SIZE.set(len(self._buffer))
                 logger.warning(
                     "points_requeued",
                     count=len(points_to_write),
@@ -189,6 +243,7 @@ class InfluxWriter:
                 # Buffer overflow - drop the oldest points
                 overflow = new_size - MAX_BUFFER_SIZE
                 self._dropped_points += overflow
+                INFLUX_POINTS_DROPPED.labels(reason="buffer_overflow").inc(overflow)
                 logger.error(
                     "buffer_overflow",
                     dropped=overflow,
@@ -198,6 +253,7 @@ class InfluxWriter:
                 # Keep only newest points up to max buffer size
                 combined = points_to_write + self._buffer
                 self._buffer = combined[-MAX_BUFFER_SIZE:]
+                INFLUX_BUFFER_SIZE.set(len(self._buffer))
 
     async def _write_batch(self, points: list[Point]) -> None:
         """Write a batch of points to InfluxDB.
@@ -237,18 +293,20 @@ class InfluxWriter:
             return {"healthy": False, "error": "Not connected"}
 
         try:
-            ready = await self._client.ping()
+            ready = await asyncio.wait_for(self._client.ping(), timeout=5.0)
             async with self._buffer_lock:
                 buffer_size = len(self._buffer)
 
-            return {
+            result = {
                 "healthy": ready,
                 "buffer_size": buffer_size,
                 "max_buffer_size": MAX_BUFFER_SIZE,
                 "dropped_points": self._dropped_points,
                 "url": self._settings.url,
                 "bucket": self._settings.bucket,
+                "circuit_breaker": self._circuit_breaker.get_stats(),
             }
+            return result
         except Exception as e:
             return {"healthy": False, "error": str(e)}
 

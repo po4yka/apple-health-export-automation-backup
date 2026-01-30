@@ -23,7 +23,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
                                                               ▼
 ┌─────────────────────┐     InfluxDB Query         ┌──────────────────────┐
 │  Grafana            │◀───────────────────────────│  health-ingest       │
-│  (port 3001)        │                            │  (Python 3.13)       │
+│  (port 3050)        │                            │  (Python 3.13)       │
 └─────────┬───────────┘                            └──────────┬───────────┘
           │                                                   │
           │ health.example.com                                 ▼
@@ -91,7 +91,7 @@ docker logs -f health-ingest
 
 ### 5. Access Dashboards
 
-- **Grafana**: http://localhost:3001 (admin / your password)
+- **Grafana**: http://localhost:3050 (admin / your password)
 - **InfluxDB**: http://localhost:8087 (admin / your password)
 
 ## Health Auto Export Configuration
@@ -123,7 +123,7 @@ Configure the iOS app to send data via MQTT:
 |---------|-----------|------|-------------|
 | health-ingest | `health-ingest` | - | MQTT subscriber, transforms and writes to InfluxDB |
 | InfluxDB | `health-influxdb` | 8087 | Time-series database for health metrics |
-| Grafana | `health-grafana` | 3001 | Visualization dashboards |
+| Grafana | `health-grafana` | 3050 | Visualization dashboards |
 
 ## Data Model
 
@@ -344,7 +344,7 @@ To expose Grafana publicly via Cloudflare:
 
 1. Add route in [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/):
    - **Hostname**: `health.yourdomain.com`
-   - **Service**: `http://localhost:3001`
+   - **Service**: `http://localhost:3050`
 
 2. Configure Grafana root URL in `.env`:
    ```
