@@ -64,6 +64,7 @@ health-archive-replay = "health_ingest.cli:archive_replay"
 health-archive = "health_ingest.cli:archive_manage"
 health-dlq-inspect = "health_ingest.cli:dlq_inspect"
 health-dlq-replay = "health_ingest.cli:dlq_replay"
+health-query = "health_ingest.query:query_cli"
 
 [build-system]
 requires = ["hatchling"]
