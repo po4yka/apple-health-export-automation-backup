@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 
+from ..schema_validation import get_metric_validator
 from .activity import ActivityTransformer
 from .audio import AudioTransformer
 from .base import BaseTransformer
@@ -108,6 +109,19 @@ class TransformerRegistry:
             List of InfluxDB Point objects.
         """
         items = self._normalize_payload(data)
+        validator = get_metric_validator()
+        valid_items, failures = validator.validate_items(items)
+
+        for failure in failures:
+            logger.warning(
+                "metric_schema_validation_failed",
+                schema=failure.schema,
+                error=failure.error,
+                metric_name=failure.item.get("name"),
+                data_keys=list(failure.item.keys()),
+            )
+
+        items = valid_items
         points: list = []
 
         for item in items:

@@ -31,6 +31,7 @@ classifiers = [
 dependencies = [
     "aiohttp>=3.11",
     "influxdb-client[async]>=1.50",
+    "pandera>=0.26",
     "pydantic>=2.12",
     "pydantic-settings>=2.12",
     "structlog>=25.5",
