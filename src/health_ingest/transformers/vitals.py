@@ -1,10 +1,9 @@
 """Vitals transformer for SpO2, respiratory rate, blood pressure, temperature."""
 
-from typing import Any
-
 from influxdb_client import Point
 
 from .base import BaseTransformer, HealthMetric
+from ..types import JSONObject
 
 # Metrics that map to vitals measurement
 VITALS_METRICS = {
@@ -54,7 +53,7 @@ class VitalsTransformer(BaseTransformer):
             ]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform vitals data to InfluxDB points."""
         points = []
 

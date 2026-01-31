@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
 import pandas as pd
 import pandera as pa
 
+from .types import JSONObject
 _BASE_SCHEMA = pa.DataFrameSchema(
     {
         "name": pa.Column(str, nullable=False, coerce=True),
@@ -44,7 +43,7 @@ _WORKOUT_SCHEMA = pa.DataFrameSchema(
 class ValidationFailure:
     """Represents a schema validation failure for a metric item."""
 
-    item: dict[str, Any]
+    item: JSONObject
     schema: str
     error: str
 
@@ -52,14 +51,14 @@ class ValidationFailure:
 class MetricSchemaValidator:
     """Validate metric payloads before transformation and ingestion."""
 
-    def _schema_for_item(self, item: dict[str, Any]) -> tuple[pa.DataFrameSchema, str]:
+    def _schema_for_item(self, item: JSONObject) -> tuple[pa.DataFrameSchema, str]:
         if "start" in item or "end" in item:
             return _WORKOUT_SCHEMA, "workout"
         return _BASE_SCHEMA, "base"
 
     def validate_items(
-        self, items: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], list[ValidationFailure]]:
+        self, items: list[JSONObject]
+    ) -> tuple[list[JSONObject], list[ValidationFailure]]:
         """Validate items and separate valid from invalid metrics.
 
         Args:
@@ -68,7 +67,7 @@ class MetricSchemaValidator:
         Returns:
             Tuple of (valid_items, failures).
         """
-        valid: list[dict[str, Any]] = []
+        valid: list[JSONObject] = []
         failures: list[ValidationFailure] = []
 
         for item in items:

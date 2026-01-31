@@ -1,12 +1,12 @@
 """Sleep analysis transformer."""
 
 from datetime import datetime
-from typing import Any
 
 import structlog
 from influxdb_client import Point
 
 from .base import BaseTransformer, SleepAnalysis
+from ..types import JSONObject
 
 logger = structlog.get_logger(__name__)
 
@@ -20,7 +20,7 @@ class SleepTransformer(BaseTransformer):
         """Check if this is a sleep-related metric."""
         return any(keyword in metric_name.lower() for keyword in ["sleep", "inbed", "in_bed"])
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform sleep data to InfluxDB points."""
         points = []
 
@@ -41,7 +41,7 @@ class SleepTransformer(BaseTransformer):
 
         return points
 
-    def _transform_sleep_analysis(self, item: dict[str, Any]) -> list[Point]:
+    def _transform_sleep_analysis(self, item: JSONObject) -> list[Point]:
         """Transform aggregated sleep analysis data."""
         points = []
 
@@ -82,7 +82,7 @@ class SleepTransformer(BaseTransformer):
 
         return points
 
-    def _transform_sleep_stage(self, item: dict[str, Any]) -> list[Point]:
+    def _transform_sleep_stage(self, item: JSONObject) -> list[Point]:
         """Transform individual sleep stage data."""
         points = []
 

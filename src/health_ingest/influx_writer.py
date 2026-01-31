@@ -20,6 +20,7 @@ from .metrics import (
     INFLUX_WRITE_DURATION,
     INFLUX_WRITES,
 )
+from .types import InfluxStatus, JSONObject
 
 logger = structlog.get_logger(__name__)
 
@@ -68,7 +69,7 @@ class InfluxWriter:
         """Return readiness state for InfluxDB connectivity."""
         return bool(self._client) and self._running and self._circuit_breaker.is_closed
 
-    def get_status(self) -> dict[str, Any]:
+    def get_status(self) -> InfluxStatus:
         """Get a status snapshot for readiness checks."""
         return {
             "connected": bool(self._client),
@@ -297,7 +298,7 @@ class InfluxWriter:
             except Exception as e:
                 logger.error("periodic_flush_error", error=str(e))
 
-    async def health_check(self) -> dict[str, Any]:
+    async def health_check(self) -> JSONObject:
         """Check InfluxDB connection health.
 
         Returns:

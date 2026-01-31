@@ -1,10 +1,9 @@
 """Activity and fitness transformers."""
 
-from typing import Any
-
 from influxdb_client import Point
 
 from .base import BaseTransformer, HealthMetric
+from ..types import JSONObject
 
 # Metrics that map to activity measurement
 ACTIVITY_METRICS = {
@@ -51,7 +50,7 @@ class ActivityTransformer(BaseTransformer):
             for keyword in ["energy", "exercise", "stand", "flight", "walking_running"]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform activity metric data to InfluxDB points."""
         points = []
 
