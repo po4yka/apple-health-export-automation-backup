@@ -23,11 +23,9 @@ from .metrics import (
     DUPLICATES_FILTERED,
     MESSAGES_FAILED,
     MESSAGES_PROCESSED,
-    MQTT_CONNECTED,
     QUEUE_DEPTH,
     SERVICE_INFO,
 )
-from .mqtt_handler import MQTTHandler
 from .transformers import TransformerRegistry
 
 logger = structlog.get_logger(__name__)
@@ -35,17 +33,16 @@ logger = structlog.get_logger(__name__)
 
 # Maximum concurrent message processing tasks to prevent DoS
 MAX_CONCURRENT_MESSAGES = 100
-# Bounded queue size for backpressure (blocks MQTT callback when full)
+# Bounded queue size for backpressure (blocks ingestion when full)
 MAX_QUEUE_SIZE = 1000
 
 
 class HealthIngestService:
-    """Main service orchestrating MQTT ingestion and InfluxDB writes."""
+    """Main service orchestrating HTTP ingestion and InfluxDB writes."""
 
     def __init__(self) -> None:
         """Initialize the health ingestion service."""
         self._settings = get_settings()
-        self._mqtt_handler: MQTTHandler | None = None
         self._http_handler: HTTPHandler | None = None
         self._influx_writer: InfluxWriter | None = None
         self._transformer_registry: TransformerRegistry | None = None
@@ -121,18 +118,6 @@ class HealthIngestService:
             for i in range(MAX_CONCURRENT_MESSAGES)
         ]
 
-        # Initialize and connect MQTT handler (skip if host is empty)
-        if self._settings.mqtt.host:
-            self._mqtt_handler = MQTTHandler(
-                settings=self._settings.mqtt,
-                message_callback=self._enqueue_message,
-                archiver=self._archiver,
-                dlq=self._dlq,
-            )
-            await self._mqtt_handler.connect()
-        else:
-            logger.info("mqtt_disabled", reason="MQTT_HOST is empty")
-
         # Initialize and start HTTP handler (if enabled)
         if self._settings.http.enabled:
             self._http_handler = HTTPHandler(
@@ -147,8 +132,11 @@ class HealthIngestService:
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
         # Start Prometheus metrics HTTP server (non-blocking)
-        start_metrics_server(port=9090)
-        logger.info("prometheus_metrics_started", port=9090)
+        start_metrics_server(port=self._settings.app.prometheus_port)
+        logger.info(
+            "prometheus_metrics_started",
+            port=self._settings.app.prometheus_port,
+        )
 
         logger.info("service_started")
 
@@ -173,9 +161,6 @@ class HealthIngestService:
         # Stop accepting new messages first
         if self._http_handler:
             await self._http_handler.stop()
-
-        if self._mqtt_handler:
-            await self._mqtt_handler.disconnect()
 
         # Drain queue (with timeout), then stop workers
         if self._message_queue:
@@ -206,11 +191,16 @@ class HealthIngestService:
     async def _enqueue_message(
         self, topic: str, payload: dict[str, Any], archive_id: str | None
     ) -> None:
-        """Enqueue an incoming MQTT message with backpressure."""
+        """Enqueue an incoming message with backpressure."""
         if not self._message_queue:
             logger.warning("message_queue_not_ready")
-            return
-        await self._message_queue.put((topic, payload, archive_id))
+            raise RuntimeError("message_queue_not_ready")
+        try:
+            self._message_queue.put_nowait((topic, payload, archive_id))
+            QUEUE_DEPTH.set(self._message_queue.qsize())
+        except asyncio.QueueFull:
+            QUEUE_DEPTH.set(self._message_queue.qsize())
+            raise
 
     async def _worker_loop(self, worker_id: int) -> None:
         """Worker loop for processing queued messages."""
@@ -239,7 +229,7 @@ class HealthIngestService:
         """Process a health data message.
 
         Args:
-            topic: MQTT topic.
+            topic: Message topic.
             payload: Health data payload.
             archive_id: Archive entry ID for correlation.
         """
@@ -360,19 +350,12 @@ class HealthIngestService:
     async def _watchdog_loop(self) -> None:
         """Periodic internal health monitoring.
 
-        Checks MQTT connection, InfluxDB circuit breaker, and queue depth.
+        Checks InfluxDB circuit breaker, and queue depth.
         Updates Prometheus gauges for external monitoring.
         """
         while True:
             try:
                 await asyncio.sleep(30.0)
-
-                # MQTT connection status
-                if self._mqtt_handler:
-                    connected = self._mqtt_handler.is_connected()
-                    MQTT_CONNECTED.set(1 if connected else 0)
-                    if not connected:
-                        logger.warning("watchdog_mqtt_disconnected")
 
                 # InfluxDB circuit breaker status
                 if self._influx_writer:
@@ -385,9 +368,7 @@ class HealthIngestService:
                     }[state]
                     CIRCUIT_BREAKER_STATE.labels(name="influxdb").set(state_val)
                     stats = cb.get_stats()
-                    CIRCUIT_BREAKER_TRIPS.labels(name="influxdb")._value.set(
-                        stats["total_trips"]
-                    )
+                    CIRCUIT_BREAKER_TRIPS.labels(name="influxdb").set(stats["total_trips"])
                     if state != CircuitState.CLOSED:
                         logger.warning(
                             "watchdog_influxdb_circuit",
@@ -438,11 +419,6 @@ class HealthIngestService:
             "workers": len(self._worker_tasks),
             "max_concurrent": MAX_CONCURRENT_MESSAGES,
         }
-
-        if self._mqtt_handler:
-            result["mqtt"] = {
-                "connected": self._mqtt_handler.is_connected(),
-            }
 
         if self._http_handler:
             result["http"] = {"enabled": True}
@@ -500,7 +476,6 @@ def health_check_cli() -> None:
     Verifies that the service can:
     1. Load configuration
     2. Connect to InfluxDB
-    3. (Optionally) connect to MQTT
 
     Exits with code 0 on success, 1 on failure.
     """

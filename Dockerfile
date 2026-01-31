@@ -12,7 +12,7 @@ FROM python:3.13-slim AS builder
 
 # Metadata
 LABEL org.opencontainers.image.title="health-ingest"
-LABEL org.opencontainers.image.description="Apple Health data ingestion from MQTT to InfluxDB"
+LABEL org.opencontainers.image.description="Apple Health data ingestion via REST API to InfluxDB"
 LABEL org.opencontainers.image.source="https://github.com/po4yka/apple-health-export-automation-backup"
 LABEL org.opencontainers.image.licenses="MIT"
 

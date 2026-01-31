@@ -2,7 +2,7 @@
 # Apple Health Backup & Analysis System - Docker Compose Stack
 # =============================================================================
 # Services:
-#   - health-ingest: MQTT + REST API ingestion, transforms and writes to InfluxDB
+#   - health-ingest: REST API ingestion, transforms and writes to InfluxDB
 #   - influxdb: Time-series database for storing health metrics
 #   - grafana: Visualization dashboards
 #
@@ -22,7 +22,7 @@ services:
   # ---------------------------------------------------------------------------
   # Health Data Ingestion Service
   # ---------------------------------------------------------------------------
-  # Subscribes to MQTT topics, transforms health data from Health Auto Export
+  # Receives REST API payloads, transforms health data from Health Auto Export
   # iOS app, and writes to InfluxDB in batches.
   health-ingest:
     build:
@@ -38,15 +38,6 @@ services:
       - /mnt/nvme/health/dedup:/data/dedup
       - /mnt/nvme/health/dlq:/data/dlq
     environment:
-      # MQTT settings - leave MQTT_HOST empty to disable MQTT (REST API only)
-      - MQTT_HOST=${MQTT_HOST:-}
-      - MQTT_PORT=${MQTT_PORT:-1883}
-      - MQTT_USERNAME=${MQTT_USERNAME:-}
-      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
-      - MQTT_TOPIC=${MQTT_TOPIC:-health/export/#}
-      - MQTT_CLEAN_SESSION=${MQTT_CLEAN_SESSION:-true}
-      - MQTT_RECONNECT_DELAY_MIN=${MQTT_RECONNECT_DELAY_MIN:-1.0}
-      - MQTT_RECONNECT_DELAY_MAX=${MQTT_RECONNECT_DELAY_MAX:-60.0}
       # HTTP ingestion API settings
       - HTTP_ENABLED=${HTTP_ENABLED:-true}
       - HTTP_HOST=${HTTP_HOST:-0.0.0.0}
@@ -62,7 +53,8 @@ services:
       - APP_LOG_LEVEL=${APP_LOG_LEVEL:-INFO}
       - APP_LOG_FORMAT=${APP_LOG_FORMAT:-json}
       - APP_DEFAULT_SOURCE=${APP_DEFAULT_SOURCE:-health_auto_export}
-      # Archive settings - raw MQTT payload persistence
+      - APP_PROMETHEUS_PORT=${APP_PROMETHEUS_PORT:-9090}
+      # Archive settings - raw payload persistence
       - ARCHIVE_ENABLED=${ARCHIVE_ENABLED:-true}
       - ARCHIVE_DIR=/data/archive
       - ARCHIVE_ROTATION=${ARCHIVE_ROTATION:-daily}

@@ -191,6 +191,27 @@ class TestDeduplicationCache:
         assert restored == 0
 
     @pytest.mark.asyncio
+    async def test_restore_respects_max_size(self, persist_path):
+        """Test that restore only loads up to max_size newest entries."""
+        cache1 = DeduplicationCache(max_size=10, persist_path=persist_path)
+
+        points = [create_point(f"m{i}", "a", float(i)) for i in range(5)]
+        for point in points:
+            cache1.mark_processed(point)
+
+        await cache1.checkpoint()
+
+        cache2 = DeduplicationCache(max_size=3, persist_path=persist_path)
+        restored = await cache2.restore()
+
+        assert restored == 3
+        assert cache2.is_duplicate(points[0]) is False
+        assert cache2.is_duplicate(points[1]) is False
+        assert cache2.is_duplicate(points[2]) is True
+        assert cache2.is_duplicate(points[3]) is True
+        assert cache2.is_duplicate(points[4]) is True
+
+    @pytest.mark.asyncio
     async def test_cleanup_expired(self):
         """Test cleanup of expired entries."""
         cache = DeduplicationCache(max_size=100, ttl_hours=0)

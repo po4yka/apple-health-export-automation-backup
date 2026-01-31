@@ -227,11 +227,13 @@ class DeduplicationCache:
 
             with sqlite3.connect(self._persist_path) as conn:
                 cursor = conn.execute(
-                    "SELECT key, timestamp FROM dedup_cache ORDER BY timestamp"
+                    "SELECT key, timestamp FROM dedup_cache ORDER BY timestamp DESC LIMIT ?",
+                    (self._max_size,),
                 )
+                rows = list(cursor)
 
                 with self._lock:
-                    for key, ts in cursor:
+                    for key, ts in reversed(rows):
                         # Skip expired entries
                         if now - ts < self._ttl_seconds:
                             self._cache[key] = ts

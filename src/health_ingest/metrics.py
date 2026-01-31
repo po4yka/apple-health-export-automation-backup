@@ -82,7 +82,7 @@ CIRCUIT_BREAKER_STATE = Gauge(
     "Circuit breaker state (0=closed, 1=open, 2=half_open)",
     ["name"],
 )
-CIRCUIT_BREAKER_TRIPS = Counter(
+CIRCUIT_BREAKER_TRIPS = Gauge(
     "health_ingest_circuit_breaker_trips_total",
     "Total circuit breaker trips",
     ["name"],
@@ -93,12 +93,6 @@ HTTP_REQUESTS_TOTAL = Counter(
     "health_ingest_http_requests_total",
     "Total HTTP requests",
     ["method", "path", "status"],
-)
-
-# -- MQTT --
-MQTT_CONNECTED = Gauge(
-    "health_ingest_mqtt_connected",
-    "MQTT connection status (1=connected, 0=disconnected)",
 )
 
 # -- Report delivery --

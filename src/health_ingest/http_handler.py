@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -23,7 +24,7 @@ logger = structlog.get_logger(__name__)
 class HTTPHandler:
     """Handles HTTP ingestion endpoint for health data.
 
-    Provides a REST API that accepts the same JSON payloads as the MQTT handler,
+    Provides a REST API that accepts JSON payloads from Health Auto Export,
     routing them through the same processing pipeline via the shared message callback.
     """
 
@@ -112,9 +113,25 @@ class HTTPHandler:
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        # Enqueue for processing (same pipeline as MQTT)
+        # Enqueue for processing
         try:
             await self._message_callback("http/ingest", payload, archive_id)
+        except asyncio.QueueFull:
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="429").inc()
+            return web.json_response(
+                {"error": "Service overloaded, try again later"},
+                status=429,
+            )
+        except RuntimeError as e:
+            if str(e) == "message_queue_not_ready":
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="503").inc()
+                return web.json_response(
+                    {"error": "Service not ready"},
+                    status=503,
+                )
+            logger.error("http_enqueue_error", error=str(e), archive_id=archive_id)
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="500").inc()
+            return web.json_response({"error": "Internal server error"}, status=500)
         except Exception as e:
             logger.error("http_enqueue_error", error=str(e), archive_id=archive_id)
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="500").inc()
