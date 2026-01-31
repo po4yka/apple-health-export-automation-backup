@@ -30,7 +30,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 ┌─────────────────────┐     InfluxDB Query                    ▼
 │  Grafana            │◀──────────────────────────┌──────────────────────┐
 │  (port 3050)        │                           │  InfluxDB 2.x        │
-│  health.example.com  │                           │  (port 8087)         │
+│  health.example.com │                           │  (port 8087)         │
 └─────────────────────┘                           └──────────────────────┘
 ```
 

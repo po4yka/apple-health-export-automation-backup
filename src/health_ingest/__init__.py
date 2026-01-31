@@ -22,8 +22,6 @@ Example:
 """
 
 __version__ = "0.1.0"
-__author__ = ""
-__email__ = ""
 
 from .config import Settings, get_settings
 

@@ -5,9 +5,7 @@ description = "Apple Health data ingestion via REST API to InfluxDB with Grafana
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.13"
-authors = [
-    { name = "", email = "" }
-]
+authors = []
 keywords = [
     "apple-health",
     "health-data",
