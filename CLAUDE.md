@@ -55,7 +55,7 @@ All application code is under `src/health_ingest/`. Key modules:
 - **`influx_writer.py`** — Async batched InfluxDB writer with retry and circuit breaker
 - **`config.py`** — Pydantic-settings with nested settings classes; env prefix per subsystem (e.g. `HTTP_`, `INFLUXDB_`, `ARCHIVE_`). Thread-safe singleton via `get_settings()`
 - **`transformers/`** — Priority-ordered registry; each transformer subclasses `BaseTransformer` and implements `can_transform()` + `transform()`. `GenericTransformer` is the catch-all (always last)
-- **`reports/`** — Weekly report generation: `weekly.py` (Flux queries), `insights.py` (AI provider dispatch), `rules.py` (rule-based fallback), `formatter.py`, `delivery.py` (Telegram via Clawdbot)
+- **`reports/`** — Weekly report generation: `weekly.py` (Flux queries), `insights.py` (AI provider dispatch), `rules.py` (rule-based fallback), `formatter.py`, `delivery.py` (Telegram via OpenClaw)
 - **`dedup.py`** — LRU cache + SQLite persistence for idempotent ingestion
 - **`dlq.py`** — SQLite dead-letter queue with categorized failures
 - **`archive.py`** — Raw payload archiving with rotation/compression

@@ -166,8 +166,8 @@ health-check    # Verify InfluxDB connectivity and config
 | `INFLUXDB_BUCKET` | `apple_health` | InfluxDB bucket |
 | `ANTHROPIC_API_KEY` | - | For AI insights in reports |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Claude model for insights |
-| `CLAWDBOT_ENABLED` | `true` | Enable Telegram delivery |
-| `CLAWDBOT_HOOKS_TOKEN` | - | Clawdbot gateway auth token |
+| `OPENCLAW_ENABLED` | `true` | Enable Telegram delivery |
+| `OPENCLAW_HOOKS_TOKEN` | - | OpenClaw gateway auth token |
 
 ## Error Handling
 

@@ -18,7 +18,7 @@ from ..config import (
     OpenAISettings,
     get_settings,
 )
-from .delivery import ClawdbotDelivery
+from .delivery import OpenClawDelivery
 from .formatter import TelegramFormatter
 from .insights import InsightEngine
 from .models import DeliveryResult, PrivacySafeMetrics
@@ -686,9 +686,9 @@ async def generate_and_send_report(
             )
             return None
 
-        # Send via Clawdbot
-        if settings.clawdbot.enabled and settings.clawdbot.hooks_token:
-            delivery = ClawdbotDelivery(settings.clawdbot)
+        # Send via OpenClaw
+        if settings.openclaw.enabled and settings.openclaw.hooks_token:
+            delivery = OpenClawDelivery(settings.openclaw)
             week_id = start_date.strftime("%Y-W%W")
             result = await delivery.send_report(report, week_id)
 
@@ -707,7 +707,7 @@ async def generate_and_send_report(
 
             return result
         else:
-            logger.warning("clawdbot_not_configured")
+            logger.warning("openclaw_not_configured")
             return None
 
     finally:

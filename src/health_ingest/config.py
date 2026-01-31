@@ -174,15 +174,15 @@ class DLQSettings(BaseSettings):
         return v
 
 
-class ClawdbotSettings(BaseSettings):
-    """Clawdbot gateway settings for report delivery."""
+class OpenClawSettings(BaseSettings):
+    """OpenClaw gateway settings for report delivery."""
 
-    model_config = SettingsConfigDict(env_prefix="CLAWDBOT_")
+    model_config = SettingsConfigDict(env_prefix="OPENCLAW_")
 
-    enabled: bool = Field(default=True, description="Enable Telegram delivery via Clawdbot")
+    enabled: bool = Field(default=True, description="Enable Telegram delivery via OpenClaw")
     gateway_url: str = Field(
-        default="http://clawdbot-gateway:18789",
-        description="Clawdbot gateway URL",
+        default="http://openclaw-gateway:18789",
+        description="OpenClaw gateway URL",
     )
     hooks_token: str | None = Field(default=None, description="Hooks API authentication token")
     telegram_user_id: int = Field(default=0, description="Target Telegram user ID")
@@ -319,7 +319,7 @@ class Settings(BaseSettings):
     archive: ArchiveSettings = Field(default_factory=ArchiveSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     dlq: DLQSettings = Field(default_factory=DLQSettings)
-    clawdbot: ClawdbotSettings = Field(default_factory=ClawdbotSettings)
+    openclaw: OpenClawSettings = Field(default_factory=OpenClawSettings)
     insight: InsightSettings = Field(default_factory=InsightSettings)
     tracing: TracingSettings = Field(default_factory=TracingSettings)
 
@@ -336,7 +336,7 @@ class Settings(BaseSettings):
             archive=ArchiveSettings(),
             dedup=DedupSettings(),
             dlq=DLQSettings(),
-            clawdbot=ClawdbotSettings(),
+            openclaw=OpenClawSettings(),
             insight=InsightSettings(),
             tracing=TracingSettings(),
         )

@@ -49,10 +49,10 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAWDBOT_ENABLED` | `true` | Enable Telegram delivery via Clawdbot |
-| `CLAWDBOT_GATEWAY_URL` | `http://clawdbot-gateway:18789` | Clawdbot gateway URL |
-| `CLAWDBOT_HOOKS_TOKEN` | - | Hooks API authentication token |
-| `CLAWDBOT_TELEGRAM_USER_ID` | `0` | Target Telegram user ID |
+| `OPENCLAW_ENABLED` | `true` | Enable Telegram delivery via OpenClaw |
+| `OPENCLAW_GATEWAY_URL` | `http://openclaw-gateway:18789` | OpenClaw gateway URL |
+| `OPENCLAW_HOOKS_TOKEN` | - | Hooks API authentication token |
+| `OPENCLAW_TELEGRAM_USER_ID` | `0` | Target Telegram user ID |
 
 ### Archive
 

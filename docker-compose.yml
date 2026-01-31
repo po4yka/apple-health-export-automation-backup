@@ -3,6 +3,7 @@
 # =============================================================================
 # Services:
 #   - health-ingest: REST API ingestion, transforms and writes to InfluxDB
+#   - openclaw-gateway: AI personal assistant for Telegram delivery
 #   - influxdb: Time-series database for storing health metrics
 #   - grafana: Visualization dashboards
 #
@@ -13,9 +14,10 @@
 #   Rebuild: docker compose build --no-cache
 #
 # Ports:
-#   - 8084: Health Ingest REST API (http://localhost:8084)
-#   - 8087: InfluxDB (http://localhost:8087)
-#   - 3050: Grafana  (http://localhost:3050)
+#   - 8084:  Health Ingest REST API (http://localhost:8084)
+#   - 8087:  InfluxDB (http://localhost:8087)
+#   - 3050:  Grafana  (http://localhost:3050)
+#   - 18789: OpenClaw Gateway (http://localhost:18789)
 # =============================================================================
 
 services:
@@ -73,6 +75,11 @@ services:
       - DLQ_MAX_ENTRIES=${DLQ_MAX_ENTRIES:-10000}
       - DLQ_RETENTION_DAYS=${DLQ_RETENTION_DAYS:-30}
       - DLQ_MAX_RETRIES=${DLQ_MAX_RETRIES:-3}
+      # OpenClaw gateway settings (report delivery via Telegram)
+      - OPENCLAW_ENABLED=${OPENCLAW_ENABLED:-true}
+      - OPENCLAW_GATEWAY_URL=http://openclaw-gateway:18789
+      - OPENCLAW_HOOKS_TOKEN=${OPENCLAW_HOOKS_TOKEN:-}
+      - OPENCLAW_TELEGRAM_USER_ID=${OPENCLAW_TELEGRAM_USER_ID:-0}
     ports:
       # HTTP ingestion API (mapped to 8084 externally to avoid conflicts)
       - "${HTTP_PORT_EXTERNAL:-8084}:${HTTP_PORT:-8080}"
@@ -82,6 +89,36 @@ services:
       timeout: 15s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+    networks:
+      - health-network
+
+  # ---------------------------------------------------------------------------
+  # OpenClaw Gateway - AI Personal Assistant
+  # ---------------------------------------------------------------------------
+  # Local-first gateway for OpenClaw AI assistant.
+  # Delivers weekly health reports via Telegram and provides
+  # conversational access to health data.
+  # Control UI available at http://localhost:18789
+  openclaw-gateway:
+    image: openclaw/openclaw:latest
+    container_name: openclaw-gateway
+    volumes:
+      - ./data/openclaw:/root/.openclaw
+      - ./skills/apple-health:/root/.openclaw/workspace/skills/apple-health:ro
+    environment:
+      - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-health}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-apple_health}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "${OPENCLAW_PORT_EXTERNAL:-18789}:18789"
+    depends_on:
+      influxdb:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - health-network

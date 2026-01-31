@@ -1,4 +1,4 @@
-"""Report delivery via Clawdbot gateway."""
+"""Report delivery via OpenClaw gateway."""
 
 from datetime import UTC, datetime
 
@@ -11,7 +11,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from ..config import ClawdbotSettings
+from ..config import OpenClawSettings
 from ..metrics import REPORT_DELIVERIES
 from .models import DeliveryResult
 
@@ -19,24 +19,24 @@ logger = structlog.get_logger(__name__)
 
 
 class DeliveryAuthError(Exception):
-    """Raised when Clawdbot authentication fails."""
+    """Raised when OpenClaw authentication fails."""
 
     pass
 
 
-class ClawdbotDelivery:
-    """Delivers reports to Telegram via Clawdbot gateway."""
+class OpenClawDelivery:
+    """Delivers reports to Telegram via OpenClaw gateway."""
 
-    def __init__(self, settings: ClawdbotSettings) -> None:
+    def __init__(self, settings: OpenClawSettings) -> None:
         """Initialize the delivery client.
 
         Args:
-            settings: Clawdbot gateway settings.
+            settings: OpenClaw gateway settings.
         """
         self._settings = settings
 
     async def send_report(self, report: str, week_id: str | None = None) -> DeliveryResult:
-        """Send a formatted report to Telegram via Clawdbot.
+        """Send a formatted report to Telegram via OpenClaw.
 
         Uses the /hooks/agent endpoint with deliver=true for direct sending.
 
@@ -48,7 +48,7 @@ class ClawdbotDelivery:
             DeliveryResult with success status.
         """
         if not self._settings.hooks_token:
-            logger.error("clawdbot_no_token")
+            logger.error("openclaw_no_token")
             return DeliveryResult(
                 success=False,
                 attempt=0,
@@ -73,7 +73,7 @@ class ClawdbotDelivery:
             REPORT_DELIVERIES.labels(status="success").inc()
             return result
         except DeliveryAuthError:
-            logger.error("clawdbot_auth_failed")
+            logger.error("openclaw_auth_failed")
             REPORT_DELIVERIES.labels(status="auth_error").inc()
             return DeliveryResult(
                 success=False,
@@ -196,7 +196,7 @@ class ClawdbotDelivery:
             )
 
     async def health_check(self) -> bool:
-        """Check if Clawdbot gateway is reachable.
+        """Check if OpenClaw gateway is reachable.
 
         Returns:
             True if gateway responds, False otherwise.

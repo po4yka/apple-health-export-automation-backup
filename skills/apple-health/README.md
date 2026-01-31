@@ -53,7 +53,7 @@ export INFLUXDB_URL="http://influxdb:8086"
 export INFLUXDB_ORG="health"
 export INFLUXDB_BUCKET="apple_health"
 export ANTHROPIC_API_KEY="sk-..."       # For AI insights in reports
-export CLAWDBOT_HOOKS_TOKEN="..."       # For Telegram delivery
+export OPENCLAW_HOOKS_TOKEN="..."       # For Telegram delivery
 ```
 
 ## Installed Commands
