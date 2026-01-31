@@ -1,10 +1,10 @@
 """Transformer registry for routing metrics to appropriate transformers."""
 
-from typing import Any
-
 import structlog
+from influxdb_client import Point
 
 from ..schema_validation import get_metric_validator
+from ..types import JSONObject
 from .activity import ActivityTransformer
 from .audio import AudioTransformer
 from .base import BaseTransformer
@@ -61,7 +61,7 @@ class TransformerRegistry:
         # Should never reach here as GenericTransformer accepts everything
         return self._transformers[-1]
 
-    def _normalize_payload(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+    def _normalize_payload(self, data: JSONObject) -> list[JSONObject]:
         """Normalize payload into a flat list of individual metric dicts.
 
         Handles two formats from Health Auto Export:
@@ -77,7 +77,7 @@ class TransformerRegistry:
 
         # REST API format: {"data": {"metrics": [...]}}
         if isinstance(inner, dict) and "metrics" in inner:
-            items: list[dict[str, Any]] = []
+            items: list[JSONObject] = []
             for metric in inner["metrics"]:
                 if not isinstance(metric, dict):
                     continue
@@ -99,7 +99,7 @@ class TransformerRegistry:
         # Single metric (no wrapping)
         return [data]
 
-    def transform(self, data: dict[str, Any]) -> list:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform metric data using the appropriate transformer.
 
         Args:
@@ -122,7 +122,7 @@ class TransformerRegistry:
             )
 
         items = valid_items
-        points: list = []
+        points: list[Point] = []
 
         for item in items:
             metric_name = self._extract_metric_name(item)
@@ -135,7 +135,7 @@ class TransformerRegistry:
 
         return points
 
-    def _extract_metric_name(self, data: dict[str, Any]) -> str | None:
+    def _extract_metric_name(self, data: JSONObject) -> str | None:
         """Extract metric name from data payload."""
         # Try common field names
         for field in ["name", "type", "metric", "dataType"]:

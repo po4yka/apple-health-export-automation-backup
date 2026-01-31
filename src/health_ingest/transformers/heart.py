@@ -1,10 +1,9 @@
 """Heart rate and HRV transformers."""
 
-from typing import Any
-
 from influxdb_client import Point
 
 from .base import BaseTransformer, HealthMetric
+from ..types import JSONObject
 
 # Metrics that map to heart measurement
 HEART_METRICS = {
@@ -29,7 +28,7 @@ class HeartTransformer(BaseTransformer):
             keyword in metric_name.lower() for keyword in ["heart", "hrv", "pulse"]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform heart metric data to InfluxDB points."""
         points = []
 

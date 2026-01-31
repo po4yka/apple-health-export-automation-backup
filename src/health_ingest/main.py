@@ -5,8 +5,6 @@ import signal
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
@@ -33,6 +31,13 @@ from .metrics import (
 from .reports.weekly import WeeklyReportGenerator
 from .tracing import extract_trace_context, setup_tracing
 from .transformers import TransformerRegistry
+from .types import (
+    HealthCheckStatus,
+    JSONObject,
+    ServiceStatusSnapshot,
+    StatusComponents,
+    TraceContextCarrier,
+)
 
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -49,9 +54,9 @@ class QueuedMessage:
     """Message payload with optional trace context."""
 
     topic: str
-    payload: dict[str, Any]
+    payload: JSONObject
     archive_id: str | None
-    trace_context: dict[str, str] | None = None
+    trace_context: TraceContextCarrier | None = None
 
 
 class HealthIngestService:
@@ -208,9 +213,9 @@ class HealthIngestService:
             total_duplicates_filtered=self._duplicate_count,
         )
 
-    def _status_snapshot(self) -> dict[str, Any]:
+    def _status_snapshot(self) -> ServiceStatusSnapshot:
         """Return a readiness status snapshot for HTTP endpoints."""
-        components: dict[str, Any] = {}
+        components: StatusComponents = {}
         influx_ready = False
         if self._influx_writer:
             components["influxdb"] = self._influx_writer.get_status()
@@ -262,9 +267,9 @@ class HealthIngestService:
     async def _enqueue_message(
         self,
         topic: str,
-        payload: dict[str, Any],
+        payload: JSONObject,
         archive_id: str | None,
-        trace_context: dict[str, str] | None,
+        trace_context: TraceContextCarrier | None,
     ) -> None:
         """Enqueue an incoming message with backpressure."""
         if not self._message_queue:
@@ -322,7 +327,7 @@ class HealthIngestService:
                 QUEUE_DEPTH.set(self._message_queue.qsize())
 
     async def _process_message(
-        self, topic: str, payload: dict[str, Any], archive_id: str | None
+        self, topic: str, payload: JSONObject, archive_id: str | None
     ) -> None:
         """Process a health data message.
 
@@ -511,13 +516,13 @@ class HealthIngestService:
         """Request service shutdown."""
         self._shutdown_event.set()
 
-    async def health_check(self) -> dict[str, Any]:
+    async def health_check(self) -> HealthCheckStatus:
         """Get service health status.
 
         Returns:
             Dict with health status of all components.
         """
-        result: dict[str, Any] = {
+        result: HealthCheckStatus = {
             "service": "healthy",
             "messages_processed": self._message_count,
             "duplicates_filtered": self._duplicate_count,

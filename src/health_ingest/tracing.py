@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Any
 
 import structlog
 from opentelemetry import propagate, trace
+from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from .config import TracingSettings
+from .types import TraceContextCarrier
 
 logger = structlog.get_logger(__name__)
 
@@ -45,14 +46,14 @@ def setup_tracing(settings: TracingSettings) -> bool:
     return True
 
 
-def inject_trace_context() -> dict[str, str]:
+def inject_trace_context() -> TraceContextCarrier:
     """Inject the current trace context into a carrier dict."""
-    carrier: dict[str, str] = {}
+    carrier: TraceContextCarrier = {}
     propagate.inject(carrier)
     return carrier
 
 
-def extract_trace_context(headers: Mapping[str, str] | None) -> Any:
+def extract_trace_context(headers: Mapping[str, str] | None) -> Context | None:
     """Extract trace context from headers or carriers."""
     if not headers:
         return None

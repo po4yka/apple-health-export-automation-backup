@@ -1,10 +1,9 @@
 """Body composition transformer."""
 
-from typing import Any
-
 from influxdb_client import Point
 
 from .base import BaseTransformer, HealthMetric
+from ..types import JSONObject
 
 # Metrics that map to body measurement
 BODY_METRICS = {
@@ -36,7 +35,7 @@ class BodyTransformer(BaseTransformer):
             for keyword in ["body", "weight", "mass", "fat", "bmi", "lean", "waist", "height"]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform body composition data to InfluxDB points."""
         points = []
 

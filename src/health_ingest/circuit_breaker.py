@@ -2,10 +2,9 @@
 
 import time
 from enum import Enum
-from typing import Any
-
 import structlog
 
+from .types import JSONObject
 logger = structlog.get_logger(__name__)
 
 
@@ -84,7 +83,7 @@ class CircuitBreaker:
                 )
             self._state = CircuitState.OPEN
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self) -> JSONObject:
         """Get circuit breaker statistics."""
         return {
             "name": self._name,

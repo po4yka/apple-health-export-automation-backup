@@ -9,6 +9,7 @@ import structlog
 from influxdb_client import Point
 from pydantic import BaseModel, Field, field_validator
 
+from ..types import JSONObject
 logger = structlog.get_logger(__name__)
 
 
@@ -101,7 +102,7 @@ class BaseTransformer(ABC):
         pass
 
     @abstractmethod
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform raw data into InfluxDB points.
 
         Args:
@@ -112,7 +113,7 @@ class BaseTransformer(ABC):
         """
         pass
 
-    def _get_source(self, data: dict[str, Any]) -> str:
+    def _get_source(self, data: JSONObject) -> str:
         """Extract source from data or use default."""
         return self._sanitize_tag(data.get("source") or self._default_source)
 
@@ -153,7 +154,7 @@ class BaseTransformer(ABC):
     def _log_transform_error(
         self,
         error: Exception,
-        item: dict[str, Any],
+        item: JSONObject,
         context: str | None = None,
     ) -> None:
         """Log a transformation error with context.

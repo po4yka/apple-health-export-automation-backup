@@ -1,10 +1,9 @@
 """Audio exposure transformer."""
 
-from typing import Any
-
 from influxdb_client import Point
 
 from .base import BaseTransformer, HealthMetric
+from ..types import JSONObject
 
 # Metrics that map to audio measurement
 AUDIO_METRICS = {
@@ -35,7 +34,7 @@ class AudioTransformer(BaseTransformer):
             ]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform audio exposure data to InfluxDB points."""
         points = []
 
