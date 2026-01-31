@@ -34,9 +34,9 @@ services:
         condition: service_healthy
     volumes:
       # Resilience layer data persistence
-      - /mnt/nvme/health/archive:/data/archive
-      - /mnt/nvme/health/dedup:/data/dedup
-      - /mnt/nvme/health/dlq:/data/dlq
+      - ./data/archive:/data/archive
+      - ./data/dedup:/data/dedup
+      - ./data/dlq:/data/dlq
     environment:
       # HTTP ingestion API settings
       - HTTP_ENABLED=${HTTP_ENABLED:-true}
@@ -97,9 +97,9 @@ services:
     ports:
       - "8087:8086"  # Mapped to 8087 to avoid conflicts with other services
     volumes:
-      # Data persistence on NVMe for better performance
-      - /mnt/nvme/health/influxdb:/var/lib/influxdb2
-      - /mnt/nvme/health/influxdb-config:/etc/influxdb2
+      # Data persistence
+      - ./data/influxdb:/var/lib/influxdb2
+      - ./data/influxdb-config:/etc/influxdb2
     environment:
       # Initial setup configuration (only used on first run)
       - DOCKER_INFLUXDB_INIT_MODE=setup
@@ -131,7 +131,7 @@ services:
       - "3050:3000"  # Mapped to 3050 to avoid conflicts (e.g., with Karakeep)
     volumes:
       # Data persistence
-      - /mnt/nvme/health/grafana:/var/lib/grafana
+      - ./data/grafana:/var/lib/grafana
       # Provisioning configuration (datasources and dashboards)
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:

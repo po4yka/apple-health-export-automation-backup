@@ -18,6 +18,9 @@ Query, analyze, and manage Apple Health data stored in InfluxDB. Data is ingeste
 | `workout` | `duration_min`, `calories`, `distance_m`, `avg_hr`, `max_hr` | `source`, `workout_type` |
 | `body` | `weight_kg`, `body_fat_pct`, `bmi`, `lean_mass_kg`, `waist_cm`, `height_cm` | `source` |
 | `vitals` | `spo2_pct`, `spo2_pct_min`, `spo2_pct_max`, `respiratory_rate`, `bp_systolic`, `bp_diastolic`, `temp_c`, `vo2max` | `source` |
+| `mobility` | `speed_mps`, `step_length_cm`, `asymmetry_pct`, `double_support_pct`, `stair_ascent_speed`, `stair_descent_speed`, `six_min_walk_m`, `steadiness_pct` | `source` |
+| `audio` | `headphone_db`, `environmental_db` | `source` |
+| `other` | `value`, `min`, `max`, `avg` | `source`, `metric_type`, `unit` |
 
 Bucket: `apple_health` (configurable via `INFLUXDB_BUCKET`).
 

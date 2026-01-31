@@ -67,7 +67,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 ### 1. Clone and Configure
 
 ```bash
-git clone https://github.com/yourusername/apple-health-export-automation-backup.git
+git clone https://github.com/po4yka/apple-health-export-automation-backup.git
 cd apple-health-export-automation-backup
 
 # Create environment file
@@ -90,8 +90,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### 2. Create Storage Directories
 
 ```bash
-sudo mkdir -p /mnt/nvme/health/{influxdb,influxdb-config,grafana}
-sudo chown -R $USER:$USER /mnt/nvme/health
+mkdir -p ./data/{influxdb,influxdb-config,grafana,archive,dedup,dlq}
 ```
 
 ### 3. Start the Stack
@@ -197,12 +196,14 @@ Configure the iOS app to send data via REST API through Cloudflare Tunnel:
 
 | Measurement | Tags | Fields |
 |-------------|------|--------|
-| `heart` | source | bpm, resting_bpm, hrv_ms |
-| `activity` | source | steps, active_calories, basal_calories, exercise_min, stand_hours, floors_climbed |
+| `heart` | source | bpm, bpm_min, bpm_max, bpm_avg, resting_bpm, hrv_ms, hrv_ms_min, hrv_ms_max, hrv_ms_avg |
+| `activity` | source | steps, active_calories, basal_calories, distance_m, exercise_min, stand_min, stand_hours, floors_climbed |
 | `sleep` | source | duration_min, deep_min, rem_min, core_min, awake_min, in_bed_min, quality_score |
 | `workout` | source, workout_type | duration_min, calories, distance_m, avg_hr, max_hr |
-| `body` | source | weight_kg, body_fat_pct, bmi, lean_mass_kg |
-| `vitals` | source | spo2_pct, respiratory_rate, bp_systolic, bp_diastolic, temp_c, vo2max |
+| `body` | source | weight_kg, body_fat_pct, bmi, lean_mass_kg, waist_cm, height_cm |
+| `vitals` | source | spo2_pct, spo2_pct_min, spo2_pct_max, respiratory_rate, bp_systolic, bp_diastolic, temp_c, vo2max |
+| `mobility` | source | speed_mps, step_length_cm, asymmetry_pct, double_support_pct, stair_ascent_speed, stair_descent_speed, six_min_walk_m, steadiness_pct |
+| `audio` | source | headphone_db, environmental_db |
 | `other` | source, metric_type, unit | value, min, max, avg |
 
 ### Supported Workout Types
@@ -211,12 +212,30 @@ Running, Walking, Cycling, Swimming, Strength Training, HIIT, Yoga, Pilates, Ell
 
 ## CLI Commands
 
+| Command | Description |
+|---------|-------------|
+| `health-ingest` | Start the REST API ingestion service |
+| `health-check` | Verify InfluxDB connectivity and config |
+| `health-query` | Ad-hoc InfluxDB queries for health data |
+| `health-report` | Generate a weekly health report to stdout |
+| `health-report-send` | Generate and send report via Telegram |
+| `health-archive` | Manage raw payload archives (stats, compress, cleanup) |
+| `health-archive-replay` | Replay archived payloads by date range |
+| `health-dlq-inspect` | Inspect dead-letter queue entries |
+| `health-dlq-replay` | Replay failed messages from the DLQ |
+
 ```bash
 # Start the ingestion service
 uv run health-ingest
 
 # Generate a weekly health report
 uv run health-report
+
+# Query recent heart rate data
+uv run health-query heart -f resting_bpm -r 7d
+
+# Inspect dead-letter queue
+uv run health-dlq-inspect
 
 # Run with custom log level
 APP_LOG_LEVEL=DEBUG uv run health-ingest
@@ -296,6 +315,7 @@ apple-health-export-automation-backup/
 ├── docker-compose.yml          # Service orchestration
 ├── .env.example                # Environment template
 ├── README.md                   # This file
+├── LICENSE                     # MIT license
 ├── src/
 │   └── health_ingest/
 │       ├── __init__.py
@@ -307,6 +327,10 @@ apple-health-export-automation-backup/
 │       ├── archive.py          # Raw payload archiver
 │       ├── dedup.py            # Deduplication cache
 │       ├── dlq.py              # Dead-letter queue
+│       ├── circuit_breaker.py  # Circuit breaker for InfluxDB writes
+│       ├── cli.py              # CLI entry points (archive, DLQ)
+│       ├── metrics.py          # Prometheus metrics definitions
+│       ├── query.py            # Ad-hoc InfluxDB query CLI
 │       ├── transformers/       # Data transformation modules
 │       │   ├── base.py         # Base classes and Pydantic models
 │       │   ├── registry.py     # Transformer routing
@@ -316,14 +340,30 @@ apple-health-export-automation-backup/
 │       │   ├── workout.py      # Exercise sessions
 │       │   ├── body.py         # Weight, body composition
 │       │   ├── vitals.py       # SpO2, respiratory, BP
+│       │   ├── mobility.py     # Walking speed, steadiness
+│       │   ├── audio.py        # Audio exposure levels
 │       │   └── generic.py      # Fallback for unknown metrics
 │       └── reports/
-│           └── weekly.py       # AI-powered weekly reports
+│           ├── weekly.py       # AI-powered weekly report generator
+│           ├── models.py       # Report data models
+│           ├── insights.py     # AI insight generation
+│           ├── rules.py        # Rule-based insight fallbacks
+│           ├── formatter.py    # Report formatting
+│           └── delivery.py     # Telegram delivery via Clawdbot
+├── skills/
+│   └── apple-health/           # OpenClaw skill definition
+│       ├── SKILL.md            # Skill metadata and command reference
+│       └── README.md           # Skill installation guide
 ├── tests/
 │   ├── conftest.py             # Pytest fixtures
 │   ├── test_transformers.py    # Transformer unit tests
 │   ├── test_http_handler.py    # HTTP handler tests
-│   └── test_influx_writer.py   # Influx writer buffer tests
+│   ├── test_influx_writer.py   # Influx writer buffer tests
+│   ├── test_archive.py         # Archive tests
+│   ├── test_dedup.py           # Deduplication tests
+│   ├── test_delivery.py        # Report delivery tests
+│   ├── test_dlq.py             # Dead-letter queue tests
+│   └── test_insights.py        # Insight generation tests
 └── grafana/
     └── provisioning/
         ├── datasources/
@@ -338,21 +378,35 @@ apple-health-export-automation-backup/
 
 ### Environment Variables
 
+**HTTP Ingestion**
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HTTP_ENABLED` | `true` | Enable HTTP REST API ingestion endpoint |
+| `HTTP_HOST` | `0.0.0.0` | HTTP server bind address |
 | `HTTP_PORT` | `8080` | HTTP server port (inside container) |
 | `HTTP_PORT_EXTERNAL` | `8084` | Host port mapped to HTTP_PORT |
 | `HTTP_AUTH_TOKEN` | - | Bearer token for HTTP authentication |
 | `HTTP_MAX_REQUEST_SIZE` | `10485760` | Maximum request body size in bytes |
+
+**InfluxDB**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `INFLUXDB_URL` | `http://influxdb:8086` | InfluxDB connection URL |
 | `INFLUXDB_TOKEN` | **required** | InfluxDB API token |
 | `INFLUXDB_ORG` | `health` | InfluxDB organization |
 | `INFLUXDB_BUCKET` | `apple_health` | InfluxDB bucket name |
 | `INFLUXDB_BATCH_SIZE` | `1000` | Points per batch write |
 | `INFLUXDB_FLUSH_INTERVAL_MS` | `30000` | Flush interval (ms) |
-| `APP_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
+
+**Application**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL) |
 | `APP_LOG_FORMAT` | `json` | Log format (json, console) |
+| `APP_DEFAULT_SOURCE` | `health_auto_export` | Default source tag for metrics |
 | `APP_PROMETHEUS_PORT` | `9090` | Prometheus metrics server port |
 | `INSIGHT_AI_PROVIDER` | `anthropic` | AI provider for weekly reports (`anthropic`, `openai`, `grok`) |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for weekly reports |
@@ -361,6 +415,49 @@ apple-health-export-automation-backup/
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model for weekly reports |
 | `GROK_API_KEY` | - | Grok (xAI) API key for weekly reports |
 | `GROK_MODEL` | `grok-2-latest` | Grok (xAI) model for weekly reports |
+| `INSIGHT_PREFER_AI` | `true` | Prefer AI insights over rule-based |
+| `INSIGHT_MAX_INSIGHTS` | `5` | Maximum insights per report |
+| `INSIGHT_AI_TIMEOUT_SECONDS` | `30.0` | AI API timeout in seconds |
+
+**Telegram Delivery (Optional)**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAWDBOT_ENABLED` | `true` | Enable Telegram delivery via Clawdbot |
+| `CLAWDBOT_GATEWAY_URL` | `http://clawdbot-gateway:18789` | Clawdbot gateway URL |
+| `CLAWDBOT_HOOKS_TOKEN` | - | Hooks API authentication token |
+| `CLAWDBOT_TELEGRAM_USER_ID` | `0` | Target Telegram user ID |
+
+**Archive**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARCHIVE_ENABLED` | `true` | Enable raw payload archiving |
+| `ARCHIVE_DIR` | `/data/archive` | Archive directory path |
+| `ARCHIVE_ROTATION` | `daily` | Rotation strategy (daily, hourly) |
+| `ARCHIVE_MAX_AGE_DAYS` | `30` | Delete archives older than N days |
+| `ARCHIVE_COMPRESS_AFTER_DAYS` | `7` | Compress archives older than N days |
+
+**Deduplication**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEDUP_ENABLED` | `true` | Enable deduplication |
+| `DEDUP_MAX_SIZE` | `100000` | Maximum cache entries |
+| `DEDUP_TTL_HOURS` | `24` | TTL for cache entries in hours |
+| `DEDUP_PERSIST_ENABLED` | `true` | Enable SQLite persistence |
+| `DEDUP_PERSIST_PATH` | `/data/dedup/cache.db` | Persistence file path |
+| `DEDUP_CHECKPOINT_INTERVAL_SEC` | `300` | Checkpoint interval in seconds |
+
+**Dead-Letter Queue**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DLQ_ENABLED` | `true` | Enable dead-letter queue |
+| `DLQ_DB_PATH` | `/data/dlq/dlq.db` | SQLite database path |
+| `DLQ_MAX_ENTRIES` | `10000` | Maximum entries before eviction |
+| `DLQ_RETENTION_DAYS` | `30` | Delete entries older than N days |
+| `DLQ_MAX_RETRIES` | `3` | Maximum replay attempts |
 
 ### DLQ Categories
 

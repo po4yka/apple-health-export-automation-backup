@@ -66,12 +66,12 @@ class TransformerRegistry:
 
         Handles two formats from Health Auto Export:
 
-        MQTT format (flat list):
-            {"data": [{"name": "heart_rate", "date": "...", "qty": 72}]}
-
-        REST API format (nested metrics):
+        REST API format (nested metrics, current):
             {"data": {"metrics": [{"name": "heart_rate", "units": "bpm",
                                    "data": [{"date": "...", "qty": 72}]}]}}
+
+        Flat list format (legacy):
+            {"data": [{"name": "heart_rate", "date": "...", "qty": 72}]}
         """
         inner = data.get("data")
 
@@ -91,7 +91,7 @@ class TransformerRegistry:
                         items.append(item)
             return items
 
-        # MQTT format: {"data": [...]}
+        # Flat list format (legacy): {"data": [...]}
         if isinstance(inner, list):
             base = {k: v for k, v in data.items() if k != "data"}
             return [{**base, **item} for item in inner if isinstance(item, dict)]
