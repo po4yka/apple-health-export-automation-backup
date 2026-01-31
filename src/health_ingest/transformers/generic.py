@@ -1,11 +1,11 @@
 """Generic transformer for unrecognized metrics."""
 
 from datetime import datetime
-from typing import Any
 
 from influxdb_client import Point
 
 from .base import BaseTransformer
+from ..types import JSONObject
 
 
 class GenericTransformer(BaseTransformer):
@@ -17,7 +17,7 @@ class GenericTransformer(BaseTransformer):
         """Generic transformer accepts any metric."""
         return True
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform generic metric data to InfluxDB points."""
         points = []
 

@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
 import uvicorn
@@ -21,6 +21,14 @@ from . import __version__
 from .config import HTTPSettings
 from .metrics import HTTP_REQUESTS_TOTAL
 from .tracing import extract_trace_context, inject_trace_context
+from .types import (
+    ErrorDetail,
+    JSONObject,
+    JSONValue,
+    ServiceStatusSnapshot,
+    StatusComponents,
+    TraceContextCarrier,
+)
 
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -89,14 +97,14 @@ class ErrorResponse(BaseModel):
 
     error: str
     max_bytes: int | None = None
-    details: list[dict[str, Any]] | None = None
+    details: list[ErrorDetail] | None = None
 
 
 class ReadyResponse(BaseModel):
     """Readiness response."""
 
     status: str
-    components: dict[str, Any] = Field(default_factory=dict)
+    components: StatusComponents = Field(default_factory=dict)
 
 
 class InfoResponse(BaseModel):
@@ -146,11 +154,11 @@ class HTTPHandler:
         self,
         settings: HTTPSettings,
         message_callback: Callable[
-            [str, dict[str, Any], str | None, dict[str, str] | None], Awaitable[None]
+            [str, JSONObject, str | None, TraceContextCarrier | None], Awaitable[None]
         ],
         archiver: Any | None = None,
         dlq: Any | None = None,
-        status_provider: Callable[[], dict[str, Any]] | None = None,
+        status_provider: Callable[[], ServiceStatusSnapshot] | None = None,
         report_callback: Callable[[datetime | None], Awaitable[str]] | None = None,
     ) -> None:
         self._settings = settings
@@ -183,9 +191,9 @@ class HTTPHandler:
             status_code: int,
             error: str,
             max_bytes: int | None = None,
-            details: list[dict[str, Any]] | None = None,
+            details: list[ErrorDetail] | None = None,
         ) -> JSONResponse:
-            payload: dict[str, Any] = {"error": error}
+            payload: dict[str, JSONValue] = {"error": error}
             if max_bytes is not None:
                 payload["max_bytes"] = max_bytes
             if details is not None:
@@ -291,6 +299,14 @@ class HTTPHandler:
                         )
                     HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
                     return error_response(status.HTTP_400_BAD_REQUEST, "Invalid JSON")
+
+                if not isinstance(payload, dict):
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="422").inc()
+                    return error_response(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Payload must be a JSON object",
+                    )
+                payload = cast(JSONObject, payload)
 
                 try:
                     HealthIngestPayload.model_validate(payload)
@@ -491,7 +507,7 @@ class HTTPHandler:
                 ).inc()
                 return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "DLQ unavailable")
 
-            async def callback(topic: str, payload: dict[str, Any]) -> None:
+            async def callback(topic: str, payload: JSONObject) -> None:
                 await self._message_callback(topic, payload, None, None)
 
             success = await self._dlq.replay_entry(entry_id, callback)
@@ -531,7 +547,7 @@ class HTTPHandler:
                 HTTP_REQUESTS_TOTAL.labels(method="POST", path="/dlq/replay", status="400").inc()
                 return error_response(status.HTTP_400_BAD_REQUEST, "Invalid category")
 
-            async def callback(topic: str, payload_data: dict[str, Any]) -> None:
+            async def callback(topic: str, payload_data: JSONObject) -> None:
                 await self._message_callback(topic, payload_data, None, None)
 
             success, failure = await self._dlq.replay_category(
@@ -603,7 +619,7 @@ class HTTPHandler:
                     "end_date must be on or after start_date",
                 )
 
-            async def callback(topic: str, payload_data: dict[str, Any], archive_id: str) -> None:
+            async def callback(topic: str, payload_data: JSONObject, archive_id: str) -> None:
                 await self._message_callback(topic, payload_data, archive_id, None)
 
             processed = await self._archiver.replay(
