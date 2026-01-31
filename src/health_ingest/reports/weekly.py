@@ -458,7 +458,9 @@ Provide your analysis in 3-4 paragraphs. Be specific and reference the actual nu
         lines.append(f"  - Total exercise minutes: {metrics.total_exercise_minutes:.0f}")
         if metrics.steps_change_pct is not None:
             direction = "up" if metrics.steps_change_pct > 0 else "down"
-            lines.append(f"  - Steps vs last week: {direction} {abs(metrics.steps_change_pct):.1f}%")
+            lines.append(
+                f"  - Steps vs last week: {direction} {abs(metrics.steps_change_pct):.1f}%"
+            )
 
         # Heart
         lines.append("\nHEART:")
@@ -483,7 +485,9 @@ Provide your analysis in 3-4 paragraphs. Be specific and reference the actual nu
             lines.append(f"  - Average sleep quality: {metrics.avg_sleep_quality:.0f}%")
         if metrics.sleep_change_pct is not None:
             direction = "up" if metrics.sleep_change_pct > 0 else "down"
-            lines.append(f"  - Sleep vs last week: {direction} {abs(metrics.sleep_change_pct):.1f}%")
+            lines.append(
+                f"  - Sleep vs last week: {direction} {abs(metrics.sleep_change_pct):.1f}%"
+            )
 
         # Workouts
         lines.append("\nWORKOUTS:")
@@ -531,18 +535,18 @@ Provide your analysis in 3-4 paragraphs. Be specific and reference the actual nu
         report = f"""
 Weekly Health Report
 {date_range}
-{'=' * 50}
+{"=" * 50}
 
 {self._format_metrics_for_ai(metrics)}
 
-{'=' * 50}
+{"=" * 50}
 AI INSIGHTS & RECOMMENDATIONS:
-{'=' * 50}
+{"=" * 50}
 
 {insights}
 
-{'=' * 50}
-Generated on {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}
+{"=" * 50}
+Generated on {datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")}
 """
         return report.strip()
 
@@ -765,10 +769,12 @@ def run_report_and_send() -> None:
     settings = get_settings()
     setup_logging(settings.app)
 
-    result = asyncio.run(generate_and_send_report(
-        dry_run=args.dry_run,
-        stdout=args.stdout,
-    ))
+    result = asyncio.run(
+        generate_and_send_report(
+            dry_run=args.dry_run,
+            stdout=args.stdout,
+        )
+    )
 
     if result and not result.success:
         raise SystemExit(1)

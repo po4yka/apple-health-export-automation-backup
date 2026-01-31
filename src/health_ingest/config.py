@@ -267,9 +267,7 @@ class AppSettings(BaseSettings):
     default_source: str = Field(
         default="health_auto_export", description="Default source tag for metrics"
     )
-    prometheus_port: int = Field(
-        default=9090, description="Port for Prometheus metrics server"
-    )
+    prometheus_port: int = Field(default=9090, description="Port for Prometheus metrics server")
 
     @field_validator("log_level")
     @classmethod

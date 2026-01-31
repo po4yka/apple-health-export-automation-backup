@@ -225,7 +225,11 @@ class HTTPHandler:
                 try:
                     payload = json.loads(raw_body)
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    logger.warning("http_payload_parse_error", error=str(exc), archive_id=archive_id)
+                    logger.warning(
+                        "http_payload_parse_error",
+                        error=str(exc),
+                        archive_id=archive_id,
+                    )
                     if self._dlq:
                         from .dlq import DLQCategory
 
@@ -264,7 +268,11 @@ class HTTPHandler:
                     )
                 except RuntimeError as exc:
                     if str(exc) == "message_queue_not_ready":
-                        HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="503").inc()
+                        HTTP_REQUESTS_TOTAL.labels(
+                            method="POST",
+                            path="/ingest",
+                            status="503",
+                        ).inc()
                         return error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE, "Service not ready"
                         )

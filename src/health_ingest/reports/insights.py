@@ -53,9 +53,9 @@ class InsightEngine:
     def __init__(
         self,
         anthropic_settings: AnthropicSettings,
-        openai_settings: OpenAISettings,
-        grok_settings: GrokSettings,
         insight_settings: InsightSettings,
+        openai_settings: OpenAISettings | None = None,
+        grok_settings: GrokSettings | None = None,
     ) -> None:
         """Initialize the insight engine.
 
@@ -66,8 +66,8 @@ class InsightEngine:
             insight_settings: Insight generation settings.
         """
         self._anthropic_settings = anthropic_settings
-        self._openai_settings = openai_settings
-        self._grok_settings = grok_settings
+        self._openai_settings = openai_settings or OpenAISettings()
+        self._grok_settings = grok_settings or GrokSettings()
         self._insight_settings = insight_settings
         self._rule_engine = RuleEngine()
 

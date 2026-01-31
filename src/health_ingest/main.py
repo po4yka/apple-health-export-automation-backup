@@ -29,8 +29,8 @@ from .metrics import (
     QUEUE_DEPTH,
     SERVICE_INFO,
 )
-from .transformers import TransformerRegistry
 from .tracing import extract_trace_context, setup_tracing
+from .transformers import TransformerRegistry
 
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)

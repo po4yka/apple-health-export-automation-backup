@@ -1,9 +1,5 @@
 """Tests for health data transformers."""
 
-from datetime import datetime, timezone
-
-import pytest
-
 from health_ingest.transformers import (
     ActivityTransformer,
     AudioTransformer,
@@ -204,9 +200,7 @@ class TestWorkoutTransformer:
             self.transformer._normalize_workout_type("traditionalStrengthTraining")
             == "strength_training"
         )
-        assert (
-            self.transformer._normalize_workout_type("highIntensityIntervalTraining") == "hiit"
-        )
+        assert self.transformer._normalize_workout_type("highIntensityIntervalTraining") == "hiit"
 
 
 class TestBodyTransformer:

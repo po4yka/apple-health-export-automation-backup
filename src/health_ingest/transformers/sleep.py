@@ -18,10 +18,7 @@ class SleepTransformer(BaseTransformer):
 
     def can_transform(self, metric_name: str) -> bool:
         """Check if this is a sleep-related metric."""
-        return any(
-            keyword in metric_name.lower()
-            for keyword in ["sleep", "inbed", "in_bed"]
-        )
+        return any(keyword in metric_name.lower() for keyword in ["sleep", "inbed", "in_bed"])
 
     def transform(self, data: dict[str, Any]) -> list[Point]:
         """Transform sleep data to InfluxDB points."""

@@ -14,9 +14,7 @@ logger = structlog.get_logger(__name__)
 
 # Regex to normalize Health Auto Export date format:
 # "2022-06-12 23:59:00 +0400" -> "2022-06-12T23:59:00+04:00"
-_DATE_SPACE_TZ_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s([+-])(\d{2})(\d{2})$"
-)
+_DATE_SPACE_TZ_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s([+-])(\d{2})(\d{2})$")
 
 
 def _normalize_date(value: Any) -> Any:
