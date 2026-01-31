@@ -269,6 +269,15 @@ class AppSettings(BaseSettings):
         return v
 
 
+class TracingSettings(BaseSettings):
+    """OpenTelemetry tracing settings."""
+
+    model_config = SettingsConfigDict(env_prefix="OTEL_")
+
+    enabled: bool = Field(default=False, description="Enable OpenTelemetry tracing")
+    service_name: str = Field(default="health-ingest", description="Service name")
+
+
 class Settings(BaseSettings):
     """Combined application settings."""
 
@@ -281,6 +290,7 @@ class Settings(BaseSettings):
     dlq: DLQSettings = Field(default_factory=DLQSettings)
     clawdbot: ClawdbotSettings = Field(default_factory=ClawdbotSettings)
     insight: InsightSettings = Field(default_factory=InsightSettings)
+    tracing: TracingSettings = Field(default_factory=TracingSettings)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -295,6 +305,7 @@ class Settings(BaseSettings):
             dlq=DLQSettings(),
             clawdbot=ClawdbotSettings(),
             insight=InsightSettings(),
+            tracing=TracingSettings(),
         )
 
 

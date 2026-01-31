@@ -74,6 +74,7 @@ class TestHTTPIngestEndpoint:
         call_args = callback.call_args
         assert call_args[0][0] == "http/ingest"
         assert call_args[0][1] == payload
+        assert isinstance(call_args[0][3], dict)
 
     @pytest.mark.asyncio
     async def test_missing_auth_returns_401(self):

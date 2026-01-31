@@ -2,10 +2,13 @@
 
 import asyncio
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import structlog
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 from prometheus_client import start_http_server as start_metrics_server
 
 from .archive import RawArchiver
@@ -27,14 +30,26 @@ from .metrics import (
     SERVICE_INFO,
 )
 from .transformers import TransformerRegistry
+from .tracing import extract_trace_context, setup_tracing
 
 logger = structlog.get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 # Maximum concurrent message processing tasks to prevent DoS
 MAX_CONCURRENT_MESSAGES = 100
 # Bounded queue size for backpressure (blocks ingestion when full)
 MAX_QUEUE_SIZE = 1000
+
+
+@dataclass(frozen=True)
+class QueuedMessage:
+    """Message payload with optional trace context."""
+
+    topic: str
+    payload: dict[str, Any]
+    archive_id: str | None
+    trace_context: dict[str, str] | None = None
 
 
 class HealthIngestService:
@@ -52,13 +67,14 @@ class HealthIngestService:
         self._shutdown_event = asyncio.Event()
         self._message_count = 0
         self._duplicate_count = 0
-        self._message_queue: asyncio.Queue[tuple[str, dict[str, Any], str | None]] | None = None
+        self._message_queue: asyncio.Queue[QueuedMessage] | None = None
         self._worker_tasks: list[asyncio.Task] = []
         self._checkpoint_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Start the ingestion service."""
+        setup_tracing(self._settings.tracing)
         logger.info("service_starting", version="0.1.0")
         SERVICE_INFO.info({"version": "0.1.0", "python": "3.13"})
 
@@ -189,14 +205,25 @@ class HealthIngestService:
         )
 
     async def _enqueue_message(
-        self, topic: str, payload: dict[str, Any], archive_id: str | None
+        self,
+        topic: str,
+        payload: dict[str, Any],
+        archive_id: str | None,
+        trace_context: dict[str, str] | None,
     ) -> None:
         """Enqueue an incoming message with backpressure."""
         if not self._message_queue:
             logger.warning("message_queue_not_ready")
             raise RuntimeError("message_queue_not_ready")
         try:
-            self._message_queue.put_nowait((topic, payload, archive_id))
+            self._message_queue.put_nowait(
+                QueuedMessage(
+                    topic=topic,
+                    payload=payload,
+                    archive_id=archive_id,
+                    trace_context=trace_context,
+                )
+            )
             QUEUE_DEPTH.set(self._message_queue.qsize())
         except asyncio.QueueFull:
             QUEUE_DEPTH.set(self._message_queue.qsize())
@@ -209,12 +236,28 @@ class HealthIngestService:
 
         while True:
             try:
-                topic, payload, archive_id = await self._message_queue.get()
+                message = await self._message_queue.get()
             except asyncio.CancelledError:
                 break
 
             try:
-                await self._process_message(topic, payload, archive_id)
+                context = extract_trace_context(message.trace_context)
+                with tracer.start_as_current_span(
+                    "queue.process",
+                    context=context,
+                    kind=SpanKind.CONSUMER,
+                ) as span:
+                    span.set_attribute("messaging.system", "asyncio")
+                    span.set_attribute("messaging.destination", "health_ingest_queue")
+                    span.set_attribute("messaging.destination_kind", "queue")
+                    span.set_attribute("health.ingest.topic", message.topic)
+                    if message.archive_id:
+                        span.set_attribute("archive.id", message.archive_id)
+                    await self._process_message(
+                        message.topic,
+                        message.payload,
+                        message.archive_id,
+                    )
                 MESSAGES_PROCESSED.inc()
             except Exception as e:
                 MESSAGES_FAILED.labels(error_type=type(e).__name__).inc()
@@ -284,7 +327,15 @@ class HealthIngestService:
 
             # Write to InfluxDB
             try:
-                await self._influx_writer.write(points)
+                with tracer.start_as_current_span(
+                    "influxdb.write",
+                    kind=SpanKind.CLIENT,
+                ) as span:
+                    span.set_attribute("db.system", "influxdb")
+                    span.set_attribute("db.operation", "write")
+                    span.set_attribute("influxdb.bucket", self._settings.influxdb.bucket)
+                    span.set_attribute("points.count", len(points))
+                    await self._influx_writer.write(points)
             except Exception as e:
                 logger.warning(
                     "write_error",
