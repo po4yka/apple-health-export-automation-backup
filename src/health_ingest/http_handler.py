@@ -5,17 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import structlog
 import uvicorn
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from . import __version__
 from .config import HTTPSettings
 from .metrics import HTTP_REQUESTS_TOTAL
 from .tracing import extract_trace_context, inject_trace_context
@@ -90,6 +92,49 @@ class ErrorResponse(BaseModel):
     details: list[dict[str, Any]] | None = None
 
 
+class ReadyResponse(BaseModel):
+    """Readiness response."""
+
+    status: str
+    components: dict[str, Any] = Field(default_factory=dict)
+
+
+class InfoResponse(BaseModel):
+    """Service info response."""
+
+    name: str
+    version: str
+
+
+class DLQReplayRequest(BaseModel):
+    """Request payload for replaying DLQ entries."""
+
+    category: str
+    limit: int = 100
+
+
+class ArchiveReplayRequest(BaseModel):
+    """Request payload for replaying archive entries."""
+
+    start_date: date
+    end_date: date
+
+
+class WeeklyReportRequest(BaseModel):
+    """Request payload for weekly report generation."""
+
+    end_date: datetime | None = None
+
+
+class ReplayResponse(BaseModel):
+    """Response for replay requests."""
+
+    status: str
+    processed: int | None = None
+    success: int | None = None
+    failure: int | None = None
+
+
 class HTTPHandler:
     """Handles HTTP ingestion endpoint for health data.
 
@@ -105,11 +150,15 @@ class HTTPHandler:
         ],
         archiver: Any | None = None,
         dlq: Any | None = None,
+        status_provider: Callable[[], dict[str, Any]] | None = None,
+        report_callback: Callable[[datetime | None], Awaitable[str]] | None = None,
     ) -> None:
         self._settings = settings
         self._message_callback = message_callback
         self._archiver = archiver
         self._dlq = dlq
+        self._status_provider = status_provider
+        self._report_callback = report_callback
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
@@ -307,6 +356,306 @@ class HTTPHandler:
             """Handle GET /health -- returns service liveness status."""
             HTTP_REQUESTS_TOTAL.labels(method="GET", path="/health", status="200").inc()
             return {"status": "ok"}
+
+        @app.get(
+            "/ready",
+            response_model=ReadyResponse,
+            responses={
+                503: {"model": ErrorResponse},
+            },
+            summary="Readiness check",
+        )
+        async def ready():
+            """Handle GET /ready -- returns readiness of dependencies."""
+            if self._status_provider:
+                status_payload = self._status_provider()
+                readiness_status = status_payload.get("status", "unknown")
+                components = status_payload.get("components", {})
+            else:
+                components = {
+                    "archiver": "enabled" if self._archiver else "disabled",
+                    "dlq": "enabled" if self._dlq else "disabled",
+                }
+                readiness_status = "ok"
+            if readiness_status != "ok":
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/ready", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Not ready")
+            HTTP_REQUESTS_TOTAL.labels(method="GET", path="/ready", status="200").inc()
+            return ReadyResponse(status=readiness_status, components=components)
+
+        @app.get(
+            "/info",
+            response_model=InfoResponse,
+            summary="Service info",
+        )
+        async def info() -> InfoResponse:
+            """Handle GET /info -- returns service metadata."""
+            HTTP_REQUESTS_TOTAL.labels(method="GET", path="/info", status="200").inc()
+            return InfoResponse(name="health-ingest", version=__version__)
+
+        @app.get(
+            "/metrics",
+            summary="Prometheus metrics",
+        )
+        async def metrics() -> Response:
+            """Handle GET /metrics -- returns Prometheus metrics."""
+            HTTP_REQUESTS_TOTAL.labels(method="GET", path="/metrics", status="200").inc()
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+        @app.get(
+            "/dlq",
+            responses={
+                401: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="List DLQ entries",
+        )
+        async def list_dlq_entries(
+            request: Request,
+            category: str | None = None,
+            limit: int = 100,
+            offset: int = 0,
+        ):
+            """Handle GET /dlq -- list DLQ entries."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._dlq:
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "DLQ unavailable")
+            from .dlq import DLQCategory
+
+            try:
+                dlq_category = DLQCategory(category) if category else None
+            except ValueError:
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq", status="400").inc()
+                return error_response(status.HTTP_400_BAD_REQUEST, "Invalid category")
+            entries = await self._dlq.get_entries(
+                category=dlq_category,
+                limit=limit,
+                offset=offset,
+            )
+            HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq", status="200").inc()
+            return {"items": [entry.to_dict() for entry in entries]}
+
+        @app.get(
+            "/dlq/{entry_id}",
+            responses={
+                401: {"model": ErrorResponse},
+                404: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Get DLQ entry",
+        )
+        async def get_dlq_entry(
+            request: Request,
+            entry_id: str,
+        ):
+            """Handle GET /dlq/{entry_id} -- fetch a DLQ entry."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq/{id}", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._dlq:
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq/{id}", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "DLQ unavailable")
+            entry = await self._dlq.get_entry(entry_id)
+            if not entry:
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq/{id}", status="404").inc()
+                return error_response(status.HTTP_404_NOT_FOUND, "Entry not found")
+            HTTP_REQUESTS_TOTAL.labels(method="GET", path="/dlq/{id}", status="200").inc()
+            return entry.to_dict()
+
+        @app.post(
+            "/dlq/{entry_id}/replay",
+            response_model=ReplayResponse,
+            responses={
+                401: {"model": ErrorResponse},
+                404: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Replay DLQ entry",
+        )
+        async def replay_dlq_entry(
+            request: Request,
+            entry_id: str,
+        ):
+            """Handle POST /dlq/{entry_id}/replay -- replay a DLQ entry."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/dlq/{id}/replay", status="401"
+                ).inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._dlq:
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/dlq/{id}/replay", status="503"
+                ).inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "DLQ unavailable")
+
+            async def callback(topic: str, payload: dict[str, Any]) -> None:
+                await self._message_callback(topic, payload, None, None)
+
+            success = await self._dlq.replay_entry(entry_id, callback)
+            if not success:
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/dlq/{id}/replay", status="404"
+                ).inc()
+                return error_response(status.HTTP_404_NOT_FOUND, "Entry not found or failed")
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/dlq/{id}/replay", status="200").inc()
+            return ReplayResponse(status="replayed", success=1, failure=0)
+
+        @app.post(
+            "/dlq/replay",
+            response_model=ReplayResponse,
+            responses={
+                401: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Replay DLQ category",
+        )
+        async def replay_dlq_category(
+            request: Request,
+            payload: DLQReplayRequest,
+        ):
+            """Handle POST /dlq/replay -- replay DLQ entries by category."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/dlq/replay", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._dlq:
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/dlq/replay", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "DLQ unavailable")
+            from .dlq import DLQCategory
+
+            try:
+                category = DLQCategory(payload.category)
+            except ValueError:
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/dlq/replay", status="400").inc()
+                return error_response(status.HTTP_400_BAD_REQUEST, "Invalid category")
+
+            async def callback(topic: str, payload_data: dict[str, Any]) -> None:
+                await self._message_callback(topic, payload_data, None, None)
+
+            success, failure = await self._dlq.replay_category(
+                category,
+                callback,
+                limit=payload.limit,
+            )
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/dlq/replay", status="200").inc()
+            return ReplayResponse(status="replayed", success=success, failure=failure)
+
+        @app.delete(
+            "/dlq/{entry_id}",
+            responses={
+                401: {"model": ErrorResponse},
+                404: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Delete DLQ entry",
+        )
+        async def delete_dlq_entry(
+            request: Request,
+            entry_id: str,
+        ):
+            """Handle DELETE /dlq/{entry_id} -- delete a DLQ entry."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="DELETE", path="/dlq/{id}", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._dlq:
+                HTTP_REQUESTS_TOTAL.labels(method="DELETE", path="/dlq/{id}", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "DLQ unavailable")
+            deleted = await self._dlq.delete_entry(entry_id)
+            if not deleted:
+                HTTP_REQUESTS_TOTAL.labels(method="DELETE", path="/dlq/{id}", status="404").inc()
+                return error_response(status.HTTP_404_NOT_FOUND, "Entry not found")
+            HTTP_REQUESTS_TOTAL.labels(method="DELETE", path="/dlq/{id}", status="200").inc()
+            return {"status": "deleted", "id": entry_id}
+
+        @app.post(
+            "/archive/replay",
+            response_model=ReplayResponse,
+            responses={
+                400: {"model": ErrorResponse},
+                401: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Replay archived payloads",
+        )
+        async def replay_archive(
+            request: Request,
+            payload: ArchiveReplayRequest,
+        ):
+            """Handle POST /archive/replay -- replay archived payloads."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/archive/replay", status="401"
+                ).inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._archiver:
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/archive/replay", status="503"
+                ).inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Archive unavailable")
+            if payload.end_date < payload.start_date:
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/archive/replay", status="400"
+                ).inc()
+                return error_response(
+                    status.HTTP_400_BAD_REQUEST,
+                    "end_date must be on or after start_date",
+                )
+
+            async def callback(topic: str, payload_data: dict[str, Any], archive_id: str) -> None:
+                await self._message_callback(topic, payload_data, archive_id, None)
+
+            processed = await self._archiver.replay(
+                payload.start_date,
+                payload.end_date,
+                callback,
+            )
+            HTTP_REQUESTS_TOTAL.labels(
+                method="POST", path="/archive/replay", status="200"
+            ).inc()
+            return ReplayResponse(status="replayed", processed=processed)
+
+        @app.post(
+            "/reports/weekly",
+            response_model=dict[str, Any],
+            responses={
+                401: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Generate weekly report",
+        )
+        async def generate_weekly_report(
+            request: Request,
+            payload: WeeklyReportRequest,
+        ):
+            """Handle POST /reports/weekly -- generate weekly report."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/reports/weekly", status="401"
+                ).inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._report_callback:
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/reports/weekly", status="503"
+                ).inc()
+                return error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "Report generator unavailable"
+                )
+            try:
+                report = await self._report_callback(payload.end_date)
+            except Exception as exc:
+                logger.error("weekly_report_failed", error=str(exc))
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/reports/weekly", status="500"
+                ).inc()
+                return error_response(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR, "Report generation failed"
+                )
+            HTTP_REQUESTS_TOTAL.labels(
+                method="POST", path="/reports/weekly", status="200"
+            ).inc()
+            return {"status": "generated", "report": report}
 
         return app
 

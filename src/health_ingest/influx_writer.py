@@ -63,6 +63,20 @@ class InfluxWriter:
         """Get the circuit breaker instance."""
         return self._circuit_breaker
 
+    @property
+    def is_ready(self) -> bool:
+        """Return readiness state for InfluxDB connectivity."""
+        return bool(self._client) and self._running and self._circuit_breaker.is_closed
+
+    def get_status(self) -> dict[str, Any]:
+        """Get a status snapshot for readiness checks."""
+        return {
+            "connected": bool(self._client),
+            "running": self._running,
+            "circuit_state": self._circuit_breaker.state.value,
+            "buffer_size": len(self._buffer),
+        }
+
     async def connect(self) -> None:
         """Connect to InfluxDB."""
         logger.info(
