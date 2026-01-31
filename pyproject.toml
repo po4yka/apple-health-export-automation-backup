@@ -29,6 +29,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "duckdb>=1.1",
     "fastapi>=0.115",
     "influxdb-client[async]>=1.50",
     "pandera>=0.26",
@@ -67,6 +68,7 @@ health-archive = "health_ingest.cli:archive_manage"
 health-dlq-inspect = "health_ingest.cli:dlq_inspect"
 health-dlq-replay = "health_ingest.cli:dlq_replay"
 health-query = "health_ingest.query:query_cli"
+health-duckdb = "health_ingest.duckdb_analytics:duckdb_cli"
 
 [build-system]
 requires = ["hatchling"]
