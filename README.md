@@ -169,6 +169,12 @@ uv run health-report
 
 # Run with custom log level
 APP_LOG_LEVEL=DEBUG uv run health-ingest
+
+# Query archived payloads locally with DuckDB
+uv run health-duckdb --sql "SELECT topic, COUNT(*) c FROM raw_archive GROUP BY 1"
+
+# Export archived payloads to Parquet
+uv run health-duckdb --export-parquet /data/exports/raw_archive.parquet
 ```
 
 ## Development
