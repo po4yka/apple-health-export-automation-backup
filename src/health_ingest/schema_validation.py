@@ -8,7 +8,6 @@ from typing import Any
 import pandas as pd
 import pandera as pa
 
-
 _BASE_SCHEMA = pa.DataFrameSchema(
     {
         "name": pa.Column(str, nullable=False, coerce=True),
@@ -86,7 +85,7 @@ class MetricSchemaValidator:
             schema, schema_name = self._schema_for_item(item)
             try:
                 schema.validate(pd.DataFrame([item]), lazy=True)
-            except pa.errors.SchemaError as exc:
+            except (pa.errors.SchemaError, pa.errors.SchemaErrors) as exc:
                 failures.append(
                     ValidationFailure(
                         item=item,

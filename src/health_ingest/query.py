@@ -15,26 +15,59 @@ from .config import InfluxDBSettings, get_settings
 # Schema: measurement -> list of valid field names
 MEASUREMENT_FIELDS: dict[str, list[str]] = {
     "heart": [
-        "bpm", "bpm_min", "bpm_max", "bpm_avg",
-        "resting_bpm", "hrv_ms", "hrv_ms_min", "hrv_ms_max", "hrv_ms_avg",
+        "bpm",
+        "bpm_min",
+        "bpm_max",
+        "bpm_avg",
+        "resting_bpm",
+        "hrv_ms",
+        "hrv_ms_min",
+        "hrv_ms_max",
+        "hrv_ms_avg",
     ],
     "activity": [
-        "steps", "active_calories", "basal_calories",
-        "distance_m", "exercise_min", "stand_min", "stand_hours", "floors_climbed",
+        "steps",
+        "active_calories",
+        "basal_calories",
+        "distance_m",
+        "exercise_min",
+        "stand_min",
+        "stand_hours",
+        "floors_climbed",
     ],
     "sleep": [
-        "duration_min", "deep_min", "rem_min", "core_min",
-        "awake_min", "in_bed_min", "quality_score",
+        "duration_min",
+        "deep_min",
+        "rem_min",
+        "core_min",
+        "awake_min",
+        "in_bed_min",
+        "quality_score",
     ],
     "workout": [
-        "duration_min", "calories", "distance_m", "avg_hr", "max_hr",
+        "duration_min",
+        "calories",
+        "distance_m",
+        "avg_hr",
+        "max_hr",
     ],
     "body": [
-        "weight_kg", "body_fat_pct", "bmi", "lean_mass_kg", "waist_cm", "height_cm",
+        "weight_kg",
+        "body_fat_pct",
+        "bmi",
+        "lean_mass_kg",
+        "waist_cm",
+        "height_cm",
     ],
     "vitals": [
-        "spo2_pct", "spo2_pct_min", "spo2_pct_max",
-        "respiratory_rate", "bp_systolic", "bp_diastolic", "temp_c", "vo2max",
+        "spo2_pct",
+        "spo2_pct_min",
+        "spo2_pct_max",
+        "respiratory_rate",
+        "bp_systolic",
+        "bp_diastolic",
+        "temp_c",
+        "vo2max",
     ],
 }
 
@@ -122,18 +155,29 @@ async def _run_query(
         records: list[dict[str, Any]] = []
         for table in tables:
             for record in table.records:
-                records.append({
-                    "time": record.get_time().isoformat() if record.get_time() else None,
-                    "measurement": record.values.get("_measurement", ""),
-                    "field": record.get_field(),
-                    "value": record.get_value(),
-                    "tags": {
-                        k: v
-                        for k, v in record.values.items()
-                        if k not in ("_time", "_start", "_stop", "_measurement", "_field", "_value",
-                                     "result", "table")
-                    },
-                })
+                records.append(
+                    {
+                        "time": record.get_time().isoformat() if record.get_time() else None,
+                        "measurement": record.values.get("_measurement", ""),
+                        "field": record.get_field(),
+                        "value": record.get_value(),
+                        "tags": {
+                            k: v
+                            for k, v in record.values.items()
+                            if k
+                            not in (
+                                "_time",
+                                "_start",
+                                "_stop",
+                                "_measurement",
+                                "_field",
+                                "_value",
+                                "result",
+                                "table",
+                            )
+                        },
+                    }
+                )
         return records
     finally:
         await client.close()
@@ -278,7 +322,7 @@ def query_cli() -> None:
             "  health-query heart -f resting_bpm -r 7d\n"
             "  health-query activity -f steps -r 24h -a sum --format json\n"
             "  health-query sleep -r 30d -a mean --window 1d\n"
-            '  health-query raw --flux \'from(bucket:"apple_health") |> range(start:-1h)\'\n'
+            "  health-query raw --flux 'from(bucket:\"apple_health\") |> range(start:-1h)'\n"
         ),
     )
     parser.add_argument(
@@ -287,18 +331,21 @@ def query_cli() -> None:
         help=f"Measurement to query: {', '.join(measurements)}",
     )
     parser.add_argument(
-        "--field", "-f",
+        "--field",
+        "-f",
         default=None,
         help="Specific field to query (default: all fields)",
     )
     parser.add_argument(
-        "--range", "-r",
+        "--range",
+        "-r",
         default="24h",
         choices=sorted(VALID_RANGES),
         help="Time range (default: 24h)",
     )
     parser.add_argument(
-        "--agg", "-a",
+        "--agg",
+        "-a",
         default="mean",
         choices=sorted(VALID_AGGS),
         help="Aggregation function (default: mean)",

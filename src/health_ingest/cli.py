@@ -303,9 +303,7 @@ def dlq_replay() -> None:
         print("Error: must specify --id, --category, or use --dry-run to show all", file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(
-        _replay_dlq(args.db_path, args.entry_id, args.category, args.limit, args.dry_run)
-    )
+    asyncio.run(_replay_dlq(args.db_path, args.entry_id, args.category, args.limit, args.dry_run))
 
 
 async def _archive_stats(archive_dir: Path) -> None:

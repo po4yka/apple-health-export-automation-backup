@@ -56,11 +56,7 @@ class TestHTTPIngestEndpoint:
         callback = AsyncMock()
         handler = _make_handler(message_callback=callback)
         async with await _client_for(handler) as client:
-            payload = {
-                "data": [
-                    {"name": "heart_rate", "date": "2026-01-30T12:00:00Z", "qty": 72}
-                ]
-            }
+            payload = {"data": [{"name": "heart_rate", "date": "2026-01-30T12:00:00Z", "qty": 72}]}
             resp = await client.post(
                 "/ingest",
                 json=payload,

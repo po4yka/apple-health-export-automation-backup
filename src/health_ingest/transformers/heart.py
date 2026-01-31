@@ -26,8 +26,7 @@ class HeartTransformer(BaseTransformer):
     def can_transform(self, metric_name: str) -> bool:
         """Check if this is a heart-related metric."""
         return metric_name.lower() in [k.lower() for k in HEART_METRICS] or any(
-            keyword in metric_name.lower()
-            for keyword in ["heart", "hrv", "pulse"]
+            keyword in metric_name.lower() for keyword in ["heart", "hrv", "pulse"]
         )
 
     def transform(self, data: dict[str, Any]) -> list[Point]:

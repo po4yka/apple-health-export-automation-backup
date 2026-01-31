@@ -6,8 +6,8 @@ import argparse
 import csv
 import json
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import duckdb
 
@@ -43,7 +43,7 @@ def _print_table(columns: list[str], rows: Iterable[tuple[object, ...]]) -> None
 def _print_results(columns: list[str], rows: list[tuple[object, ...]], fmt: str) -> None:
     """Print query results in the requested format."""
     if fmt == "json":
-        output = [dict(zip(columns, row)) for row in rows]
+        output = [dict(zip(columns, row, strict=True)) for row in rows]
         print(json.dumps(output, indent=2, default=str))
         return
     if fmt == "csv":
@@ -80,8 +80,8 @@ def duckdb_cli() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  health-duckdb --sql \"SELECT topic, COUNT(*) c FROM raw_archive GROUP BY 1\"\n"
-            "  health-duckdb --sql \"SELECT * FROM raw_archive LIMIT 5\" --format csv\n"
+            '  health-duckdb --sql "SELECT topic, COUNT(*) c FROM raw_archive GROUP BY 1"\n'
+            '  health-duckdb --sql "SELECT * FROM raw_archive LIMIT 5" --format csv\n'
             "  health-duckdb --export-parquet /data/exports/raw.parquet\n"
         ),
     )
@@ -133,9 +133,7 @@ def duckdb_cli() -> None:
         if args.export_parquet:
             export_path = args.export_parquet
             _ensure_parent(export_path)
-            conn.execute(
-                f"COPY ({query}) TO '{export_path}' (FORMAT PARQUET)"
-            )
+            conn.execute(f"COPY ({query}) TO '{export_path}' (FORMAT PARQUET)")
             print(f"Exported Parquet to {export_path}")
             if args.sql is None:
                 return

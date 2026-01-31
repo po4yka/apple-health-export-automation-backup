@@ -33,6 +33,7 @@ dependencies = [
     "fastapi>=0.115",
     "influxdb-client[async]>=1.50",
     "pandera>=0.26",
+    "pandas>=2.2",
     "pydantic>=2.12",
     "pydantic-settings>=2.12",
     "opentelemetry-api>=1.36",

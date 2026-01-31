@@ -29,7 +29,7 @@ MAX_BUFFER_SIZE = 10000
 # Exceptions that should NOT trigger retries (permanent failures)
 NON_RETRYABLE_EXCEPTIONS = (
     ValueError,  # Invalid data
-    TypeError,   # Type errors
+    TypeError,  # Type errors
 )
 
 

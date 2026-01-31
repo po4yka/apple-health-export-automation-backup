@@ -255,9 +255,7 @@ class DeduplicationCache:
 
         with self._lock:
             keys_to_remove = [
-                key
-                for key, ts in self._cache.items()
-                if now - ts >= self._ttl_seconds
+                key for key, ts in self._cache.items() if now - ts >= self._ttl_seconds
             ]
             for key in keys_to_remove:
                 del self._cache[key]
