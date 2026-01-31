@@ -6,10 +6,10 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 
 ```mermaid
 graph TD
-    A["Health Auto Export\n(iPhone)"] -->|"REST API\nPOST /ingest via HTTPS"| B["Cloudflare Tunnel"]
-    B --> C["health-ingest\nHTTP :8084"]
-    C --> D["InfluxDB 2.x\n(port 8087)"]
-    D -->|"InfluxDB Query"| E["Grafana\n(port 3050)\nhealth.example.com"]
+    A["Health Auto Export<br/>(iPhone)"] -->|"REST API<br/>POST /ingest via HTTPS"| B["Cloudflare Tunnel"]
+    B --> C["health-ingest<br/>HTTP :8084"]
+    C --> D["InfluxDB 2.x<br/>(port 8087)"]
+    D -->|"InfluxDB Query"| E["Grafana<br/>(port 3050)<br/>health.example.com"]
 ```
 
 ## Prerequisites
