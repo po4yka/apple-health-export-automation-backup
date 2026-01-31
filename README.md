@@ -216,6 +216,10 @@ curl -X POST http://localhost:8084/ingest \
 curl http://localhost:8084/health
 ```
 
+The FastAPI-powered OpenAPI schema is available at `http://localhost:8084/openapi.json`,
+and interactive documentation is served at `http://localhost:8084/docs` for SDK generation
+workflows.
+
 ## Project Structure
 
 ```
@@ -232,7 +236,7 @@ apple-health-export-automation-backup/
 │       ├── main.py             # Application entry point
 │       ├── config.py           # Pydantic settings
 │       ├── logging.py          # Structured logging setup
-│       ├── http_handler.py     # REST API ingestion endpoint
+│       ├── http_handler.py     # FastAPI ingestion endpoint + OpenAPI docs
 │       ├── influx_writer.py    # Async batch writes to InfluxDB
 │       ├── archive.py          # Raw payload archiver
 │       ├── dedup.py            # Deduplication cache
