@@ -1,6 +1,7 @@
 """Configuration management using pydantic-settings."""
 
 import threading
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +56,32 @@ class AnthropicSettings(BaseSettings):
 
     api_key: str | None = Field(default=None, description="Anthropic API key")
     model: str = Field(default="claude-sonnet-4-20250514", description="Claude model to use")
+
+
+class OpenAISettings(BaseSettings):
+    """OpenAI API settings for health reports."""
+
+    model_config = SettingsConfigDict(env_prefix="OPENAI_")
+
+    api_key: str | None = Field(default=None, description="OpenAI API key")
+    model: str = Field(default="gpt-4o-mini", description="OpenAI model to use")
+    base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="OpenAI-compatible base URL",
+    )
+
+
+class GrokSettings(BaseSettings):
+    """Grok (xAI) API settings for health reports."""
+
+    model_config = SettingsConfigDict(env_prefix="GROK_")
+
+    api_key: str | None = Field(default=None, description="Grok API key")
+    model: str = Field(default="grok-2-latest", description="Grok model to use")
+    base_url: str = Field(
+        default="https://api.x.ai/v1",
+        description="Grok OpenAI-compatible base URL",
+    )
 
 
 class ArchiveSettings(BaseSettings):
@@ -179,6 +206,10 @@ class InsightSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="INSIGHT_")
 
     prefer_ai: bool = Field(default=True, description="Prefer AI over rules when available")
+    ai_provider: Literal["anthropic", "openai", "grok"] = Field(
+        default="anthropic",
+        description="AI provider to use for insights",
+    )
     max_insights: int = Field(default=5, description="Maximum insights to include in report")
     include_reasoning: bool = Field(default=True, description="Include reasoning in insights")
     ai_timeout_seconds: float = Field(default=30.0, description="AI API timeout in seconds")
@@ -284,6 +315,8 @@ class Settings(BaseSettings):
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     influxdb: InfluxDBSettings = Field(default_factory=InfluxDBSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
+    openai: OpenAISettings = Field(default_factory=OpenAISettings)
+    grok: GrokSettings = Field(default_factory=GrokSettings)
     app: AppSettings = Field(default_factory=AppSettings)
     archive: ArchiveSettings = Field(default_factory=ArchiveSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
@@ -299,6 +332,8 @@ class Settings(BaseSettings):
             http=HTTPSettings(),
             influxdb=InfluxDBSettings(),
             anthropic=AnthropicSettings(),
+            openai=OpenAISettings(),
+            grok=GrokSettings(),
             app=AppSettings(),
             archive=ArchiveSettings(),
             dedup=DedupSettings(),
