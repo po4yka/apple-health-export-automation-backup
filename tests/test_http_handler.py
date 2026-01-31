@@ -1,5 +1,6 @@
 """Tests for HTTP handler."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -187,6 +188,44 @@ class TestHTTPIngestEndpoint:
         assert resp.status == 500
         body = await resp.json()
         assert body["error"] == "Internal server error"
+
+    @pytest.mark.asyncio
+    async def test_queue_full_returns_429(self, aiohttp_client):
+        """POST /ingest returns 429 when queue is full."""
+        callback = AsyncMock(side_effect=asyncio.QueueFull())
+        handler = _make_handler(message_callback=callback)
+        app = web.Application()
+        app.router.add_post("/ingest", handler._handle_ingest)
+
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/ingest",
+            json={"data": []},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert resp.status == 429
+        body = await resp.json()
+        assert body["error"] == "Service overloaded, try again later"
+
+    @pytest.mark.asyncio
+    async def test_queue_not_ready_returns_503(self, aiohttp_client):
+        """POST /ingest returns 503 when queue is not ready."""
+        callback = AsyncMock(side_effect=RuntimeError("message_queue_not_ready"))
+        handler = _make_handler(message_callback=callback)
+        app = web.Application()
+        app.router.add_post("/ingest", handler._handle_ingest)
+
+        client = await aiohttp_client(app)
+        resp = await client.post(
+            "/ingest",
+            json={"data": []},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert resp.status == 503
+        body = await resp.json()
+        assert body["error"] == "Service not ready"
 
 
 class TestHTTPHealthEndpoint:
