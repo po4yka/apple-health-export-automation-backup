@@ -12,12 +12,16 @@ import structlog
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .config import HTTPSettings
 from .metrics import HTTP_REQUESTS_TOTAL
+from .tracing import extract_trace_context, inject_trace_context
 
 logger = structlog.get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class MetricPoint(BaseModel):
@@ -96,7 +100,9 @@ class HTTPHandler:
     def __init__(
         self,
         settings: HTTPSettings,
-        message_callback: Callable[[str, dict[str, Any], str | None], Awaitable[None]],
+        message_callback: Callable[
+            [str, dict[str, Any], str | None, dict[str, str] | None], Awaitable[None]
+        ],
         archiver: Any | None = None,
         dlq: Any | None = None,
     ) -> None:
@@ -154,104 +160,135 @@ class HTTPHandler:
         )
         async def ingest(request: Request) -> IngestAcceptedResponse:
             """Handle POST /ingest -- accepts health data JSON payload."""
-            if not self._check_auth(request):
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="401").inc()
-                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
-
-            content_length = request.headers.get("content-length")
-            if content_length and int(content_length) > self._settings.max_request_size:
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="413").inc()
-                return error_response(
-                    status.HTTP_413_CONTENT_TOO_LARGE,
-                    "Request body too large",
-                    max_bytes=self._settings.max_request_size,
+            request_context = extract_trace_context(dict(request.headers))
+            with tracer.start_as_current_span(
+                "http.ingest",
+                context=request_context,
+                kind=SpanKind.SERVER,
+            ) as span:
+                span.set_attribute("http.method", "POST")
+                span.set_attribute("http.route", "/ingest")
+                trace_context = span.get_span_context()
+                trace_id = (
+                    format(trace_context.trace_id, "032x")
+                    if trace_context and trace_context.trace_id
+                    else None
+                )
+                logger.info(
+                    "http_ingest_received",
+                    client_host=request.client.host if request.client else None,
+                    user_agent=request.headers.get("user-agent"),
+                    content_length=request.headers.get("content-length"),
+                    trace_id=trace_id,
                 )
 
-            try:
-                raw_body = await request.body()
-            except Exception:
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
-                return error_response(status.HTTP_400_BAD_REQUEST, "Failed to read request body")
+                if not self._check_auth(request):
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="401").inc()
+                    return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
 
-            if len(raw_body) > self._settings.max_request_size:
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="413").inc()
-                return error_response(
-                    status.HTTP_413_CONTENT_TOO_LARGE,
-                    "Request body too large",
-                    max_bytes=self._settings.max_request_size,
-                )
+                content_length = request.headers.get("content-length")
+                if content_length and int(content_length) > self._settings.max_request_size:
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="413").inc()
+                    return error_response(
+                        status.HTTP_413_CONTENT_TOO_LARGE,
+                        "Request body too large",
+                        max_bytes=self._settings.max_request_size,
+                    )
 
-            archive_id: str | None = None
-            if self._archiver:
                 try:
-                    archive_id = self._archiver.store_sync(
-                        topic="http/ingest",
-                        payload=raw_body,
-                        received_at=datetime.now(),
+                    raw_body = await request.body()
+                except Exception:
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
+                    return error_response(
+                        status.HTTP_400_BAD_REQUEST, "Failed to read request body"
+                    )
+
+                if len(raw_body) > self._settings.max_request_size:
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="413").inc()
+                    return error_response(
+                        status.HTTP_413_CONTENT_TOO_LARGE,
+                        "Request body too large",
+                        max_bytes=self._settings.max_request_size,
+                    )
+
+                archive_id: str | None = None
+                if self._archiver:
+                    try:
+                        archive_id = self._archiver.store_sync(
+                            topic="http/ingest",
+                            payload=raw_body,
+                            received_at=datetime.now(),
+                        )
+                    except Exception as exc:
+                        logger.error("http_archive_store_failed", error=str(exc))
+
+                try:
+                    payload = json.loads(raw_body)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    logger.warning("http_payload_parse_error", error=str(exc), archive_id=archive_id)
+                    if self._dlq:
+                        from .dlq import DLQCategory
+
+                        await self._dlq.enqueue(
+                            category=DLQCategory.JSON_PARSE_ERROR,
+                            topic="http/ingest",
+                            payload=raw_body,
+                            error=exc,
+                            archive_id=archive_id,
+                        )
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
+                    return error_response(status.HTTP_400_BAD_REQUEST, "Invalid JSON")
+
+                try:
+                    HealthIngestPayload.model_validate(payload)
+                except ValidationError as exc:
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="422").inc()
+                    return error_response(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Payload validation failed",
+                        details=exc.errors(),
+                    )
+
+                if archive_id:
+                    span.set_attribute("archive.id", archive_id)
+                span.set_attribute("payload.size", len(raw_body))
+
+                try:
+                    trace_context = inject_trace_context()
+                    await self._message_callback("http/ingest", payload, archive_id, trace_context)
+                except asyncio.QueueFull:
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="429").inc()
+                    return error_response(
+                        status.HTTP_429_TOO_MANY_REQUESTS,
+                        "Service overloaded, try again later",
+                    )
+                except RuntimeError as exc:
+                    if str(exc) == "message_queue_not_ready":
+                        HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="503").inc()
+                        return error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE, "Service not ready"
+                        )
+                    logger.error("http_enqueue_error", error=str(exc), archive_id=archive_id)
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="500").inc()
+                    return error_response(
+                        status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        "Internal server error",
                     )
                 except Exception as exc:
-                    logger.error("http_archive_store_failed", error=str(exc))
-
-            try:
-                payload = json.loads(raw_body)
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                logger.warning("http_payload_parse_error", error=str(exc), archive_id=archive_id)
-                if self._dlq:
-                    from .dlq import DLQCategory
-
-                    await self._dlq.enqueue(
-                        category=DLQCategory.JSON_PARSE_ERROR,
-                        topic="http/ingest",
-                        payload=raw_body,
-                        error=exc,
-                        archive_id=archive_id,
+                    logger.error("http_enqueue_error", error=str(exc), archive_id=archive_id)
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="500").inc()
+                    return error_response(
+                        status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        "Internal server error",
                     )
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
-                return error_response(status.HTTP_400_BAD_REQUEST, "Invalid JSON")
 
-            try:
-                HealthIngestPayload.model_validate(payload)
-            except ValidationError as exc:
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="422").inc()
-                return error_response(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Payload validation failed",
-                    details=exc.errors(),
+                logger.debug(
+                    "http_message_accepted",
+                    payload_size=len(raw_body),
+                    archive_id=archive_id,
                 )
-
-            try:
-                await self._message_callback("http/ingest", payload, archive_id)
-            except asyncio.QueueFull:
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="429").inc()
-                return error_response(
-                    status.HTTP_429_TOO_MANY_REQUESTS,
-                    "Service overloaded, try again later",
-                )
-            except RuntimeError as exc:
-                if str(exc) == "message_queue_not_ready":
-                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="503").inc()
-                    return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Service not ready")
-                logger.error("http_enqueue_error", error=str(exc), archive_id=archive_id)
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="500").inc()
-                return error_response(
-                    status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    "Internal server error",
-                )
-            except Exception as exc:
-                logger.error("http_enqueue_error", error=str(exc), archive_id=archive_id)
-                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="500").inc()
-                return error_response(
-                    status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    "Internal server error",
-                )
-
-            logger.debug(
-                "http_message_accepted",
-                payload_size=len(raw_body),
-                archive_id=archive_id,
-            )
-            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="202").inc()
-            return IngestAcceptedResponse(status="accepted", archive_id=archive_id)
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="202").inc()
+                return IngestAcceptedResponse(status="accepted", archive_id=archive_id)
 
         @app.get(
             "/health",
