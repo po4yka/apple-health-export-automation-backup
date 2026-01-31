@@ -3,11 +3,11 @@
 import pytest
 
 from health_ingest.config import (
+    VALID_LOG_LEVELS,
     AppSettings,
     ArchiveSettings,
     HTTPSettings,
     InfluxDBSettings,
-    VALID_LOG_LEVELS,
 )
 
 

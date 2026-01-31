@@ -2,8 +2,8 @@
 
 import asyncio
 import signal
-from datetime import datetime
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +30,9 @@ from .metrics import (
     QUEUE_DEPTH,
     SERVICE_INFO,
 )
+from .reports.weekly import WeeklyReportGenerator
 from .tracing import extract_trace_context, setup_tracing
 from .transformers import TransformerRegistry
-from .reports.weekly import WeeklyReportGenerator
 
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -216,7 +216,11 @@ class HealthIngestService:
             components["influxdb"] = self._influx_writer.get_status()
             influx_ready = self._influx_writer.is_ready
         else:
-            components["influxdb"] = {"connected": False, "running": False, "circuit_state": "unknown"}
+            components["influxdb"] = {
+                "connected": False,
+                "running": False,
+                "circuit_state": "unknown",
+            }
 
         queue_ready = bool(self._message_queue)
         queue_size = self._message_queue.qsize() if self._message_queue else 0
