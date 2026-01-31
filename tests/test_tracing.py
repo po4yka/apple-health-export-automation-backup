@@ -3,9 +3,7 @@
 from health_ingest.config import TracingSettings
 from health_ingest.tracing import extract_trace_context, inject_trace_context, setup_tracing
 
-TRACEPARENT_HEADER = (
-    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-)
+TRACEPARENT_HEADER = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
 
 def test_setup_tracing_disabled():

@@ -627,9 +627,7 @@ class HTTPHandler:
                 payload.end_date,
                 callback,
             )
-            HTTP_REQUESTS_TOTAL.labels(
-                method="POST", path="/archive/replay", status="200"
-            ).inc()
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/archive/replay", status="200").inc()
             return ReplayResponse(status="replayed", processed=processed)
 
         @app.post(
@@ -668,9 +666,7 @@ class HTTPHandler:
                 return error_response(
                     status.HTTP_500_INTERNAL_SERVER_ERROR, "Report generation failed"
                 )
-            HTTP_REQUESTS_TOTAL.labels(
-                method="POST", path="/reports/weekly", status="200"
-            ).inc()
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/weekly", status="200").inc()
             return {"status": "generated", "report": report}
 
         return app
