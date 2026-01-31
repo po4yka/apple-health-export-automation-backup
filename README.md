@@ -2,6 +2,26 @@
 
 A self-hosted system to backup, store, and analyze Apple Health data exported from the [Health Auto Export](https://apps.apple.com/app/health-auto-export-json-csv/id1115567069) iOS app. Data flows via REST API to InfluxDB for time-series storage, with Grafana dashboards for visualization and AI-powered weekly health insights.
 
+## Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Configuration at a Glance](#configuration-at-a-glance)
+- [Persistent Storage](#persistent-storage)
+- [Health Auto Export Configuration](#health-auto-export-configuration)
+- [Services](#services)
+- [Data Model](#data-model)
+- [CLI Commands](#cli-commands)
+- [Development](#development)
+- [Configuration Reference](#configuration-reference)
+- [Troubleshooting](#troubleshooting)
+- [Security Notes](#security-notes)
+- [Backups and Restore](#backups-and-restore)
+- [Cloudflare Tunnel Setup (Optional)](#cloudflare-tunnel-setup-optional)
+- [License](#license)
+
 ## Features
 
 - **Automated Data Ingestion**: Receives health data via REST API from Health Auto Export app
@@ -103,6 +123,36 @@ Grafana provisions two dashboards automatically under the **Apple Health** folde
 - **Apple Health Trends**: 7-day moving averages and longer-term trends across activity, cardio fitness, sleep consistency, and body/vital stats.
 
 To modify panels, export the dashboard JSON from Grafana and overwrite the matching file in `grafana/provisioning/dashboards/`.
+
+## Configuration at a Glance
+
+The full configuration lives in `.env`. Start by copying `.env.example` and filling out the required values. The most important settings are listed below; see the [Configuration Reference](#configuration-reference) for the rest.
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| `HTTP_AUTH_TOKEN` | ✅ | Bearer token used by the iOS app to authenticate REST API uploads. |
+| `INFLUXDB_TOKEN` | ✅ | Token used by the ingest service and Grafana to write/query data. |
+| `INFLUXDB_ADMIN_PASSWORD` | ✅ | Initial InfluxDB UI admin password (first run only). |
+| `GRAFANA_ADMIN_PASSWORD` | ✅ | Grafana admin password. |
+| `INSIGHT_AI_PROVIDER` | Optional | Enable weekly AI report generation (`anthropic`, `openai`, `grok`). |
+
+Tip: Use `openssl rand -hex 32` for tokens and `openssl rand -base64 16` for passwords.
+
+## Persistent Storage
+
+The Docker Compose file mounts host directories under `/mnt/nvme/health` by default:
+
+```
+/mnt/nvme/health/
+├── archive/           # Raw ingestion payloads
+├── dedup/             # Deduplication cache
+├── dlq/               # Dead-letter queue entries
+├── influxdb/          # InfluxDB data
+├── influxdb-config/   # InfluxDB config
+└── grafana/           # Grafana data
+```
+
+If you prefer a different location, update the `volumes:` paths in `docker-compose.yml` and ensure the directories exist with appropriate permissions.
 
 ## Health Auto Export Configuration
 
@@ -367,6 +417,22 @@ apple-health-export-automation-backup/
    ```bash
    APP_LOG_LEVEL=DEBUG uv run health-report
    ```
+
+## Security Notes
+
+- Keep `HTTP_AUTH_TOKEN` secret. Treat it like a password and rotate it if it leaks.
+- Only expose ports (8084, 8087, 3050) to trusted networks. If you need remote access, prefer a reverse proxy or Cloudflare Tunnel with authentication.
+- Grafana and InfluxDB passwords are stored in `.env`; keep that file out of version control.
+
+## Backups and Restore
+
+Because all state lives in mounted volumes, backups are straightforward:
+
+1. Stop services: `docker compose down`
+2. Archive `/mnt/nvme/health` (or your custom data directory).
+3. Restore by unpacking the archive to the same location and restarting the stack.
+
+For a more granular approach, InfluxDB also supports native backup/restore commands (`influx backup` and `influx restore`).
 
 ## Cloudflare Tunnel Setup (Optional)
 
