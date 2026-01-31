@@ -231,7 +231,7 @@ class TestHTTPSettings:
 
     def test_defaults(self):
         settings = HTTPSettings(_env_file=None)
-        assert settings.enabled is False
+        assert settings.enabled is True
         assert settings.host == "0.0.0.0"
         assert settings.port == 8080
         assert settings.auth_token == ""

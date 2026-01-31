@@ -146,7 +146,7 @@ class DeadLetterQueue:
 
         Args:
             category: Error category for classification.
-            topic: MQTT topic of the failed message.
+            topic: Topic of the failed message.
             payload: Raw payload bytes.
             error: Exception that caused the failure.
             archive_id: Optional archive ID for correlation.

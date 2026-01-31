@@ -9,62 +9,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
-class MQTTSettings(BaseSettings):
-    """MQTT connection settings."""
-
-    model_config = SettingsConfigDict(env_prefix="MQTT_")
-
-    host: str = Field(default="192.168.1.175", description="MQTT broker host")
-    port: int = Field(default=1883, description="MQTT broker port")
-    username: str | None = Field(default=None, description="MQTT username")
-    password: str | None = Field(default=None, description="MQTT password")
-    topic: str = Field(default="health/export/#", description="MQTT topic to subscribe")
-    client_id: str = Field(default="health-ingest", description="MQTT client ID")
-    keepalive: int = Field(default=60, description="MQTT keepalive interval in seconds")
-    clean_session: bool = Field(default=True, description="Clean session on connect")
-    reconnect_delay_min: float = Field(
-        default=1.0, description="Minimum reconnect delay in seconds"
-    )
-    reconnect_delay_max: float = Field(
-        default=60.0, description="Maximum reconnect delay in seconds"
-    )
-
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port is in valid range."""
-        if not 1 <= v <= 65535:
-            raise ValueError(f"Port must be between 1 and 65535, got {v}")
-        return v
-
-    @field_validator("keepalive")
-    @classmethod
-    def validate_keepalive(cls, v: int) -> int:
-        """Validate keepalive is positive."""
-        if v < 1:
-            raise ValueError(f"Keepalive must be at least 1 second, got {v}")
-        return v
-
-    @field_validator("reconnect_delay_min", "reconnect_delay_max")
-    @classmethod
-    def validate_reconnect_delay(cls, v: float) -> float:
-        """Validate reconnect delays are positive."""
-        if v <= 0:
-            raise ValueError(f"Reconnect delay must be > 0 seconds, got {v}")
-        return v
-
-    @field_validator("reconnect_delay_max")
-    @classmethod
-    def validate_reconnect_delay_bounds(cls, v: float, info) -> float:
-        """Ensure max reconnect delay is >= min."""
-        min_value = info.data.get("reconnect_delay_min")
-        if min_value is not None and v < min_value:
-            raise ValueError(
-                f"Reconnect delay max must be >= min ({min_value}), got {v}"
-            )
-        return v
-
-
 class InfluxDBSettings(BaseSettings):
     """InfluxDB connection settings."""
 
@@ -255,7 +199,7 @@ class HTTPSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="HTTP_")
 
-    enabled: bool = Field(default=False, description="Enable HTTP ingestion endpoint")
+    enabled: bool = Field(default=True, description="Enable HTTP ingestion endpoint")
     host: str = Field(default="0.0.0.0", description="HTTP server bind address")
     port: int = Field(default=8080, description="HTTP server port")
     auth_token: str = Field(default="", description="Bearer token for authentication")
@@ -292,6 +236,9 @@ class AppSettings(BaseSettings):
     default_source: str = Field(
         default="health_auto_export", description="Default source tag for metrics"
     )
+    prometheus_port: int = Field(
+        default=9090, description="Port for Prometheus metrics server"
+    )
 
     @field_validator("log_level")
     @classmethod
@@ -313,11 +260,18 @@ class AppSettings(BaseSettings):
             raise ValueError(f"Invalid log format '{v}'. Must be 'json' or 'console'")
         return normalized
 
+    @field_validator("prometheus_port")
+    @classmethod
+    def validate_prometheus_port(cls, v: int) -> int:
+        """Validate Prometheus port is in valid range."""
+        if not 1 <= v <= 65535:
+            raise ValueError(f"Port must be between 1 and 65535, got {v}")
+        return v
+
 
 class Settings(BaseSettings):
     """Combined application settings."""
 
-    mqtt: MQTTSettings = Field(default_factory=MQTTSettings)
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     influxdb: InfluxDBSettings = Field(default_factory=InfluxDBSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
@@ -332,7 +286,6 @@ class Settings(BaseSettings):
     def load(cls) -> "Settings":
         """Load settings from environment variables."""
         return cls(
-            mqtt=MQTTSettings(),
             http=HTTPSettings(),
             influxdb=InfluxDBSettings(),
             anthropic=AnthropicSettings(),

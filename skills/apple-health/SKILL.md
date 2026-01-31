@@ -6,7 +6,7 @@ metadata: {"openclaw":{"emoji":"🍏","requires":{"bins":["health-query"],"env":
 
 # Apple Health Data Skill
 
-Query, analyze, and manage Apple Health data stored in InfluxDB. Data is ingested from Apple Health via REST API or MQTT and stored as time-series measurements.
+Query, analyze, and manage Apple Health data stored in InfluxDB. Data is ingested from Apple Health via REST API and stored as time-series measurements.
 
 ## Data Schema
 

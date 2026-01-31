@@ -1,7 +1,7 @@
 [project]
 name = "health-ingest"
 version = "0.1.0"
-description = "Apple Health data ingestion from MQTT to InfluxDB with Grafana visualization"
+description = "Apple Health data ingestion via REST API to InfluxDB with Grafana visualization"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.13"
@@ -11,7 +11,6 @@ authors = [
 keywords = [
     "apple-health",
     "health-data",
-    "mqtt",
     "influxdb",
     "grafana",
     "time-series",
@@ -32,7 +31,6 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "paho-mqtt>=2.1",
     "aiohttp>=3.11",
     "influxdb-client[async]>=1.50",
     "pydantic>=2.12",

@@ -79,7 +79,7 @@ def archive_replay() -> None:
         health-archive-replay --start 2024-01-01 --end 2024-01-15 [--dry-run]
     """
     parser = argparse.ArgumentParser(
-        description="Replay archived MQTT messages through the processing pipeline"
+        description="Replay archived messages through the processing pipeline"
     )
     parser.add_argument(
         "--start",
