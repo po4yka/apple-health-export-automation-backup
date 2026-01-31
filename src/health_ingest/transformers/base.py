@@ -10,6 +10,7 @@ from influxdb_client import Point
 from pydantic import BaseModel, Field, field_validator
 
 from ..types import JSONObject
+
 logger = structlog.get_logger(__name__)
 
 

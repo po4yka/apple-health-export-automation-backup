@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import pandas as pd
 import pandera as pa
 
 from .types import JSONObject
+
 _BASE_SCHEMA = pa.DataFrameSchema(
     {
         "name": pa.Column(str, nullable=False, coerce=True),

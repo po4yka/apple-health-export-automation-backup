@@ -5,8 +5,8 @@ from datetime import datetime
 import structlog
 from influxdb_client import Point
 
-from .base import BaseTransformer, SleepAnalysis
 from ..types import JSONObject
+from .base import BaseTransformer, SleepAnalysis
 
 logger = structlog.get_logger(__name__)
 

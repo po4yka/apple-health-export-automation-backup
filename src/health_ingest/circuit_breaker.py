@@ -2,9 +2,11 @@
 
 import time
 from enum import Enum
+
 import structlog
 
 from .types import JSONObject
+
 logger = structlog.get_logger(__name__)
 
 

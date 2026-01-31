@@ -2,8 +2,8 @@
 
 from influxdb_client import Point
 
-from .base import BaseTransformer, HealthMetric
 from ..types import JSONObject
+from .base import BaseTransformer, HealthMetric
 
 # Metrics that map to activity measurement
 ACTIVITY_METRICS = {

@@ -2,8 +2,8 @@
 
 from influxdb_client import Point
 
-from .base import BaseTransformer, WorkoutMetric
 from ..types import JSONObject
+from .base import BaseTransformer, WorkoutMetric
 
 
 class WorkoutTransformer(BaseTransformer):

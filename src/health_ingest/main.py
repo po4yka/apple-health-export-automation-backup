@@ -5,6 +5,7 @@ import signal
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind

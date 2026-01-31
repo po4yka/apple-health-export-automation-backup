@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from typing import Any
 
 import structlog
 from influxdb_client import Point

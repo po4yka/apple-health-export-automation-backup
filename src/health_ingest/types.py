@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from typing import NotRequired, TypeAlias, TypedDict
+from typing import NotRequired, TypedDict
 
-JSONValue: TypeAlias = (
-    str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
-)
-JSONObject: TypeAlias = dict[str, JSONValue]
-TraceContextCarrier: TypeAlias = dict[str, str]
+type JSONValue = str | int | float | bool | None | list[JSONValue] | dict[str, JSONValue]
+type JSONObject = dict[str, JSONValue]
+type TraceContextCarrier = dict[str, str]
 
 
 class InfluxStatus(TypedDict):
@@ -28,8 +26,8 @@ class QueueStatus(TypedDict):
     max_size: int
 
 
-ComponentStatus: TypeAlias = InfluxStatus | QueueStatus | str | JSONObject
-StatusComponents: TypeAlias = dict[str, ComponentStatus]
+type ComponentStatus = InfluxStatus | QueueStatus | str | JSONObject
+type StatusComponents = dict[str, ComponentStatus]
 
 
 class ServiceStatusSnapshot(TypedDict):
