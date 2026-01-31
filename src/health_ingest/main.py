@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from .metrics import (
 )
 from .tracing import extract_trace_context, setup_tracing
 from .transformers import TransformerRegistry
+from .reports.weekly import WeeklyReportGenerator
 
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -141,6 +143,8 @@ class HealthIngestService:
                 message_callback=self._enqueue_message,
                 archiver=self._archiver,
                 dlq=self._dlq,
+                status_provider=self._status_snapshot,
+                report_callback=self._generate_weekly_report,
             )
             await self._http_handler.start()
 
@@ -203,6 +207,53 @@ class HealthIngestService:
             total_messages_processed=self._message_count,
             total_duplicates_filtered=self._duplicate_count,
         )
+
+    def _status_snapshot(self) -> dict[str, Any]:
+        """Return a readiness status snapshot for HTTP endpoints."""
+        components: dict[str, Any] = {}
+        influx_ready = False
+        if self._influx_writer:
+            components["influxdb"] = self._influx_writer.get_status()
+            influx_ready = self._influx_writer.is_ready
+        else:
+            components["influxdb"] = {"connected": False, "running": False, "circuit_state": "unknown"}
+
+        queue_ready = bool(self._message_queue)
+        queue_size = self._message_queue.qsize() if self._message_queue else 0
+        components["queue"] = {
+            "ready": queue_ready,
+            "size": queue_size,
+            "max_size": MAX_QUEUE_SIZE,
+        }
+
+        if self._settings.archive.enabled:
+            components["archiver"] = "enabled" if self._archiver else "missing"
+        else:
+            components["archiver"] = "disabled"
+
+        if self._settings.dlq.enabled:
+            components["dlq"] = "enabled" if self._dlq else "missing"
+        else:
+            components["dlq"] = "disabled"
+
+        status = "ok" if influx_ready and queue_ready else "degraded"
+        return {"status": status, "components": components}
+
+    async def _generate_weekly_report(self, end_date: datetime | None) -> str:
+        """Generate a weekly report using configured settings."""
+        generator = WeeklyReportGenerator(
+            influxdb_settings=self._settings.influxdb,
+            anthropic_settings=self._settings.anthropic,
+            openai_settings=self._settings.openai,
+            grok_settings=self._settings.grok,
+            ai_provider=self._settings.insight.ai_provider,
+            ai_timeout_seconds=self._settings.insight.ai_timeout_seconds,
+        )
+        await generator.connect()
+        try:
+            return await generator.generate_report(end_date=end_date)
+        finally:
+            await generator.disconnect()
 
     async def _enqueue_message(
         self,

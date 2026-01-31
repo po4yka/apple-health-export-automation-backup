@@ -1,6 +1,7 @@
 """Tests for HTTP handler."""
 
 import asyncio
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,11 +30,15 @@ def _make_handler(
     auth_token: str = "test-token",
     max_request_size: int = 10_485_760,
     message_callback: AsyncMock | None = None,
+    status_provider: Callable[[], dict[str, object]] | None = None,
+    report_callback: AsyncMock | None = None,
 ) -> HTTPHandler:
     """Create an HTTPHandler with test settings."""
     return HTTPHandler(
         settings=_make_settings(auth_token=auth_token, max_request_size=max_request_size),
         message_callback=message_callback or AsyncMock(),
+        status_provider=status_provider,
+        report_callback=report_callback,
     )
 
 
@@ -204,6 +209,87 @@ class TestHTTPHealthEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "ok"
+
+
+class TestHTTPStatusEndpoints:
+    """Tests for readiness, info, and metrics endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_ready_returns_ok(self):
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            resp = await client.get("/ready")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_ready_returns_503_when_not_ready(self):
+        handler = _make_handler(status_provider=lambda: {"status": "degraded"})
+        async with await _client_for(handler) as client:
+            resp = await client.get("/ready")
+
+        assert resp.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_info_returns_version(self):
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            resp = await client.get("/info")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["name"] == "health-ingest"
+        assert "version" in body
+
+    @pytest.mark.asyncio
+    async def test_metrics_returns_200(self):
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            resp = await client.get("/metrics")
+
+        assert resp.status_code == 200
+
+
+class TestHTTPReportEndpoint:
+    """Tests for weekly report endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_report_requires_auth(self):
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            resp = await client.post("/reports/weekly", json={})
+
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_report_returns_503_without_callback(self):
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/reports/weekly",
+                json={},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert resp.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_report_returns_generated(self):
+        callback = AsyncMock(return_value="report-body")
+        handler = _make_handler(report_callback=callback)
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/reports/weekly",
+                json={},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "generated"
+        assert body["report"] == "report-body"
 
 
 class TestHTTPHandlerLifecycle:
