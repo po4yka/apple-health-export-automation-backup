@@ -14,7 +14,7 @@ class MQTTSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="MQTT_")
 
-    host: str = Field(default="192.168.1.175", description="MQTT broker host")
+    host: str = Field(default="", description="MQTT broker host (empty to disable)")
     port: int = Field(default=1883, description="MQTT broker port")
     username: str | None = Field(default=None, description="MQTT username")
     password: str | None = Field(default=None, description="MQTT password")

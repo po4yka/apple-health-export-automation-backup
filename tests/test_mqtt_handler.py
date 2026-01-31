@@ -76,7 +76,7 @@ class TestMQTTHandler:
         """Test default settings values."""
         settings = MQTTSettings()
 
-        assert settings.host == "192.168.1.175"
+        assert settings.host == ""
         assert settings.port == 1883
         assert settings.topic == "health/export/#"
         assert settings.client_id == "health-ingest"

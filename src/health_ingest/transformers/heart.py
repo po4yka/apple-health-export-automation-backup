@@ -45,12 +45,7 @@ class HeartTransformer(BaseTransformer):
 
                 # Determine field name
                 metric_name = metric.name.lower().replace(" ", "_")
-                field_name = "bpm"  # default
-
-                for key, field in HEART_METRICS.items():
-                    if key.lower() in metric_name:
-                        field_name = field
-                        break
+                field_name = self._lookup_field(metric_name, HEART_METRICS, default="bpm")
 
                 point = (
                     Point(self.measurement)

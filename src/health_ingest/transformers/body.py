@@ -50,12 +50,7 @@ class BodyTransformer(BaseTransformer):
 
                 # Determine field name
                 metric_name = metric.name.lower().replace(" ", "_")
-                field_name = "value"  # default fallback
-
-                for key, field in BODY_METRICS.items():
-                    if key.lower() in metric_name or metric_name in key.lower():
-                        field_name = field
-                        break
+                field_name = self._lookup_field(metric_name, BODY_METRICS)
 
                 # Unit conversions
                 value = float(metric.qty)

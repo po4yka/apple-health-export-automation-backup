@@ -121,14 +121,17 @@ class HealthIngestService:
             for i in range(MAX_CONCURRENT_MESSAGES)
         ]
 
-        # Initialize and connect MQTT handler
-        self._mqtt_handler = MQTTHandler(
-            settings=self._settings.mqtt,
-            message_callback=self._enqueue_message,
-            archiver=self._archiver,
-            dlq=self._dlq,
-        )
-        await self._mqtt_handler.connect()
+        # Initialize and connect MQTT handler (skip if host is empty)
+        if self._settings.mqtt.host:
+            self._mqtt_handler = MQTTHandler(
+                settings=self._settings.mqtt,
+                message_callback=self._enqueue_message,
+                archiver=self._archiver,
+                dlq=self._dlq,
+            )
+            await self._mqtt_handler.connect()
+        else:
+            logger.info("mqtt_disabled", reason="MQTT_HOST is empty")
 
         # Initialize and start HTTP handler (if enabled)
         if self._settings.http.enabled:

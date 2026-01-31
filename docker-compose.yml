@@ -38,8 +38,8 @@ services:
       - /mnt/nvme/health/dedup:/data/dedup
       - /mnt/nvme/health/dlq:/data/dlq
     environment:
-      # MQTT settings - connects to external broker (e.g., existing Mosquitto)
-      - MQTT_HOST=${MQTT_HOST:-192.168.1.175}
+      # MQTT settings - leave MQTT_HOST empty to disable MQTT (REST API only)
+      - MQTT_HOST=${MQTT_HOST:-}
       - MQTT_PORT=${MQTT_PORT:-1883}
       - MQTT_USERNAME=${MQTT_USERNAME:-}
       - MQTT_PASSWORD=${MQTT_PASSWORD:-}

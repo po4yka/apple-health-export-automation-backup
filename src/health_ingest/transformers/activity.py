@@ -19,12 +19,16 @@ ACTIVITY_METRICS = {
     "basalEnergyBurned": "basal_calories",
     "distance_walking_running": "distance_m",
     "distanceWalkingRunning": "distance_m",
+    "walking_running_distance": "distance_m",
+    "walkingRunningDistance": "distance_m",
     "exercise_time": "exercise_min",
     "exerciseTime": "exercise_min",
     "apple_exercise_time": "exercise_min",
     "appleExerciseTime": "exercise_min",
     "stand_time": "stand_min",
     "standTime": "stand_min",
+    "apple_stand_time": "stand_min",
+    "appleStandTime": "stand_min",
     "stand_hour": "stand_hours",
     "standHour": "stand_hours",
     "apple_stand_hour": "stand_hours",
@@ -41,9 +45,10 @@ class ActivityTransformer(BaseTransformer):
 
     def can_transform(self, metric_name: str) -> bool:
         """Check if this is an activity-related metric."""
-        return metric_name.lower() in [k.lower() for k in ACTIVITY_METRICS] or any(
-            keyword in metric_name.lower()
-            for keyword in ["step", "energy", "exercise", "stand", "flight", "distance"]
+        lower = metric_name.lower()
+        return lower in {k.lower() for k in ACTIVITY_METRICS} or any(
+            keyword in lower
+            for keyword in ["energy", "exercise", "stand", "flight", "walking_running"]
         )
 
     def transform(self, data: dict[str, Any]) -> list[Point]:
@@ -60,12 +65,7 @@ class ActivityTransformer(BaseTransformer):
 
                 # Determine field name
                 metric_name = metric.name.lower().replace(" ", "_")
-                field_name = "value"  # default fallback
-
-                for key, field in ACTIVITY_METRICS.items():
-                    if key.lower() in metric_name or metric_name in key.lower():
-                        field_name = field
-                        break
+                field_name = self._lookup_field(metric_name, ACTIVITY_METRICS)
 
                 point = (
                     Point(self.measurement)
