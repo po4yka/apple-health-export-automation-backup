@@ -1,10 +1,10 @@
 """Tests for HTTP handler."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiohttp import web
+from httpx import ASGITransport, AsyncClient
 
 from health_ingest.config import HTTPSettings
 from health_ingest.http_handler import HTTPHandler
@@ -38,44 +38,37 @@ def _make_handler(
 
 
 @pytest.fixture
-def handler():
+def handler() -> HTTPHandler:
     return _make_handler()
 
 
-@pytest.fixture
-def app(handler: HTTPHandler) -> web.Application:
-    """Create an aiohttp Application for testing."""
-    app = web.Application(client_max_size=handler._settings.max_request_size)
-    app.router.add_post("/ingest", handler._handle_ingest)
-    app.router.add_get("/health", handler._handle_health)
-    return app
+async def _client_for(handler: HTTPHandler) -> AsyncClient:
+    transport = ASGITransport(app=handler.app)
+    return AsyncClient(transport=transport, base_url="http://test")
 
 
 class TestHTTPIngestEndpoint:
     """Tests for POST /ingest endpoint."""
 
     @pytest.mark.asyncio
-    async def test_valid_payload_returns_202(self, aiohttp_client):
+    async def test_valid_payload_returns_202(self):
         """POST /ingest with valid payload returns 202 Accepted."""
         callback = AsyncMock()
         handler = _make_handler(message_callback=callback)
-        app = web.Application(client_max_size=handler._settings.max_request_size)
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            payload = {
+                "data": [
+                    {"name": "heart_rate", "date": "2026-01-30T12:00:00Z", "qty": 72}
+                ]
+            }
+            resp = await client.post(
+                "/ingest",
+                json=payload,
+                headers={"Authorization": "Bearer test-token"},
+            )
 
-        client = await aiohttp_client(app)
-        payload = {
-            "data": [
-                {"name": "heart_rate", "date": "2026-01-30T12:00:00Z", "qty": 72, "units": "bpm"}
-            ]
-        }
-        resp = await client.post(
-            "/ingest",
-            json=payload,
-            headers={"Authorization": "Bearer test-token"},
-        )
-
-        assert resp.status == 202
-        body = await resp.json()
+        assert resp.status_code == 202
+        body = resp.json()
         assert body["status"] == "accepted"
         callback.assert_awaited_once()
         call_args = callback.call_args
@@ -83,148 +76,121 @@ class TestHTTPIngestEndpoint:
         assert call_args[0][1] == payload
 
     @pytest.mark.asyncio
-    async def test_missing_auth_returns_401(self, aiohttp_client):
+    async def test_missing_auth_returns_401(self):
         """POST /ingest without Authorization header returns 401."""
         handler = _make_handler()
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post("/ingest", json={"data": []})
 
-        client = await aiohttp_client(app)
-        resp = await client.post("/ingest", json={"data": []})
-
-        assert resp.status == 401
-        body = await resp.json()
+        assert resp.status_code == 401
+        body = resp.json()
         assert body["error"] == "Unauthorized"
 
     @pytest.mark.asyncio
-    async def test_wrong_token_returns_401(self, aiohttp_client):
+    async def test_wrong_token_returns_401(self):
         """POST /ingest with wrong bearer token returns 401."""
         handler = _make_handler()
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer wrong-token"},
+            )
 
-        client = await aiohttp_client(app)
-        resp = await client.post(
-            "/ingest",
-            json={"data": []},
-            headers={"Authorization": "Bearer wrong-token"},
-        )
-
-        assert resp.status == 401
+        assert resp.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_no_auth_token_configured_allows_all(self, aiohttp_client):
+    async def test_no_auth_token_configured_allows_all(self):
         """POST /ingest with empty auth_token config allows all requests."""
         callback = AsyncMock()
         handler = _make_handler(auth_token="", message_callback=callback)
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post("/ingest", json={"data": []})
 
-        client = await aiohttp_client(app)
-        resp = await client.post("/ingest", json={"data": []})
-
-        assert resp.status == 202
+        assert resp.status_code == 202
         callback.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_invalid_json_returns_400(self, aiohttp_client):
+    async def test_invalid_json_returns_400(self):
         """POST /ingest with invalid JSON returns 400."""
         handler = _make_handler()
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/ingest",
+                content=b"not valid json {",
+                headers={
+                    "Authorization": "Bearer test-token",
+                    "Content-Type": "application/json",
+                },
+            )
 
-        client = await aiohttp_client(app)
-        resp = await client.post(
-            "/ingest",
-            data=b"not valid json {",
-            headers={
-                "Authorization": "Bearer test-token",
-                "Content-Type": "application/json",
-            },
-        )
-
-        assert resp.status == 400
-        body = await resp.json()
+        assert resp.status_code == 400
+        body = resp.json()
         assert body["error"] == "Invalid JSON"
 
     @pytest.mark.asyncio
-    async def test_oversized_payload_returns_413(self, aiohttp_client):
+    async def test_oversized_payload_returns_413(self):
         """POST /ingest with oversized payload returns 413."""
         handler = _make_handler(max_request_size=1024)
-        app = web.Application(client_max_size=1024)
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            large_payload = b"x" * 2048
+            resp = await client.post(
+                "/ingest",
+                content=large_payload,
+                headers={
+                    "Authorization": "Bearer test-token",
+                    "Content-Type": "application/json",
+                },
+            )
 
-        client = await aiohttp_client(app)
-        # Create a payload larger than 1KB
-        large_payload = b"x" * 2048
-        resp = await client.post(
-            "/ingest",
-            data=large_payload,
-            headers={
-                "Authorization": "Bearer test-token",
-                "Content-Type": "application/json",
-            },
-        )
-
-        # aiohttp may return 413 at the framework level (client_max_size)
-        # or our handler catches it
-        assert resp.status in (400, 413)
+        assert resp.status_code == 413
 
     @pytest.mark.asyncio
-    async def test_callback_error_returns_500(self, aiohttp_client):
+    async def test_callback_error_returns_500(self):
         """POST /ingest returns 500 when message callback raises."""
         callback = AsyncMock(side_effect=RuntimeError("queue full"))
         handler = _make_handler(message_callback=callback)
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
 
-        client = await aiohttp_client(app)
-        resp = await client.post(
-            "/ingest",
-            json={"data": []},
-            headers={"Authorization": "Bearer test-token"},
-        )
-
-        assert resp.status == 500
-        body = await resp.json()
+        assert resp.status_code == 500
+        body = resp.json()
         assert body["error"] == "Internal server error"
 
     @pytest.mark.asyncio
-    async def test_queue_full_returns_429(self, aiohttp_client):
+    async def test_queue_full_returns_429(self):
         """POST /ingest returns 429 when queue is full."""
         callback = AsyncMock(side_effect=asyncio.QueueFull())
         handler = _make_handler(message_callback=callback)
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
 
-        client = await aiohttp_client(app)
-        resp = await client.post(
-            "/ingest",
-            json={"data": []},
-            headers={"Authorization": "Bearer test-token"},
-        )
-
-        assert resp.status == 429
-        body = await resp.json()
+        assert resp.status_code == 429
+        body = resp.json()
         assert body["error"] == "Service overloaded, try again later"
 
     @pytest.mark.asyncio
-    async def test_queue_not_ready_returns_503(self, aiohttp_client):
+    async def test_queue_not_ready_returns_503(self):
         """POST /ingest returns 503 when queue is not ready."""
         callback = AsyncMock(side_effect=RuntimeError("message_queue_not_ready"))
         handler = _make_handler(message_callback=callback)
-        app = web.Application()
-        app.router.add_post("/ingest", handler._handle_ingest)
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
 
-        client = await aiohttp_client(app)
-        resp = await client.post(
-            "/ingest",
-            json={"data": []},
-            headers={"Authorization": "Bearer test-token"},
-        )
-
-        assert resp.status == 503
-        body = await resp.json()
+        assert resp.status_code == 503
+        body = resp.json()
         assert body["error"] == "Service not ready"
 
 
@@ -232,17 +198,14 @@ class TestHTTPHealthEndpoint:
     """Tests for GET /health endpoint."""
 
     @pytest.mark.asyncio
-    async def test_health_returns_200(self, aiohttp_client):
+    async def test_health_returns_200(self):
         """GET /health returns 200 with status ok."""
         handler = _make_handler()
-        app = web.Application()
-        app.router.add_get("/health", handler._handle_health)
+        async with await _client_for(handler) as client:
+            resp = await client.get("/health")
 
-        client = await aiohttp_client(app)
-        resp = await client.get("/health")
-
-        assert resp.status == 200
-        body = await resp.json()
+        assert resp.status_code == 200
+        body = resp.json()
         assert body["status"] == "ok"
 
 
@@ -250,12 +213,19 @@ class TestHTTPHandlerLifecycle:
     """Tests for HTTPHandler start/stop lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_start_and_stop(self):
+    async def test_start_and_stop(self, monkeypatch):
         """HTTPHandler starts and stops cleanly."""
         handler = _make_handler()
+        server_mock = MagicMock()
+        server_mock.serve = AsyncMock()
+
+        def _server_factory(*_args, **_kwargs):
+            return server_mock
+
+        monkeypatch.setattr("health_ingest.http_handler.uvicorn.Server", _server_factory)
+
         await handler.start()
-        assert handler._runner is not None
-        assert handler._site is not None
+        assert handler._server is server_mock
         await handler.stop()
 
     @pytest.mark.asyncio
