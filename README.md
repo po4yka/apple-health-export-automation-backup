@@ -7,7 +7,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 - **Automated Data Ingestion**: Receives health data via REST API from Health Auto Export app
 - **Resilient Ingestion**: Backpressure with bounded queue, raw payload archiving, deduplication, and DLQ handling
 - **Time-Series Storage**: Stores all metrics in InfluxDB 2.x with infinite retention
-- **Rich Dashboards**: Pre-configured Grafana dashboards for activity, heart rate, sleep, workouts, and vitals
+- **Rich Dashboards**: Pre-configured Grafana dashboards for overview and trend monitoring across activity, heart rate, sleep, workouts, and vitals
 - **AI-Powered Insights**: Weekly health reports with personalized recommendations via Claude API
 - **Docker Deployment**: Single command deployment with Docker Compose
 - **Extensible Transformers**: Modular architecture for adding new health metric types
@@ -93,6 +93,15 @@ docker logs -f health-ingest
 
 - **Grafana**: http://localhost:3050 (admin / your password)
 - **InfluxDB**: http://localhost:8087 (admin / your password)
+
+### 6. Grafana Dashboards
+
+Grafana provisions two dashboards automatically under the **Apple Health** folder:
+
+- **Apple Health Overview**: Daily activity, heart metrics, sleep stages, workouts, and vitals.
+- **Apple Health Trends**: 7-day moving averages and longer-term trends across activity, cardio fitness, sleep consistency, and body/vital stats.
+
+To modify panels, export the dashboard JSON from Grafana and overwrite the matching file in `grafana/provisioning/dashboards/`.
 
 ## Health Auto Export Configuration
 
@@ -264,7 +273,8 @@ apple-health-export-automation-backup/
         │   └── influxdb.yml    # InfluxDB datasource config
         └── dashboards/
             ├── dashboard.yml   # Dashboard provisioning
-            └── health-overview.json  # Main dashboard
+            ├── health-overview.json  # Main dashboard
+            └── health-trends.json    # Trends dashboard
 ```
 
 ## Configuration Reference
