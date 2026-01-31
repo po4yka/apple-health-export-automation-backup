@@ -1,4 +1,4 @@
-"""Weekly health report generator using Claude API."""
+"""Weekly health report generator using configurable AI providers."""
 
 import argparse
 import asyncio
@@ -6,10 +6,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import anthropic
+import openai
 import structlog
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
+from openai import OpenAI
 
-from ..config import AnthropicSettings, InfluxDBSettings, get_settings
+from ..config import (
+    AnthropicSettings,
+    GrokSettings,
+    InfluxDBSettings,
+    OpenAISettings,
+    get_settings,
+)
 from .delivery import ClawdbotDelivery
 from .formatter import TelegramFormatter
 from .insights import InsightEngine
@@ -62,6 +70,9 @@ class WeeklyReportGenerator:
         self,
         influxdb_settings: InfluxDBSettings,
         anthropic_settings: AnthropicSettings,
+        openai_settings: OpenAISettings,
+        grok_settings: GrokSettings,
+        ai_provider: str,
         ai_timeout_seconds: float = 30.0,
     ) -> None:
         """Initialize the report generator.
@@ -69,9 +80,15 @@ class WeeklyReportGenerator:
         Args:
             influxdb_settings: InfluxDB connection settings.
             anthropic_settings: Anthropic API settings.
+            openai_settings: OpenAI API settings.
+            grok_settings: Grok API settings.
+            ai_provider: AI provider to use.
         """
         self._influxdb_settings = influxdb_settings
         self._anthropic_settings = anthropic_settings
+        self._openai_settings = openai_settings
+        self._grok_settings = grok_settings
+        self._ai_provider = ai_provider
         self._ai_timeout_seconds = ai_timeout_seconds
         self._influx_client: InfluxDBClientAsync | None = None
 
@@ -327,8 +344,9 @@ class WeeklyReportGenerator:
         Returns:
             AI-generated health insights.
         """
-        if not self._anthropic_settings.api_key:
-            return "AI insights not available (no API key configured)."
+        provider = self._ai_provider
+        if not self._provider_configured(provider):
+            return f"AI insights not available (no {provider} API key configured)."
 
         # Build metrics summary for the prompt
         metrics_text = self._format_metrics_for_ai(metrics)
@@ -343,8 +361,8 @@ Health Metrics Summary:
 
 Provide your analysis in 3-4 paragraphs. Be specific and reference the actual numbers."""
 
-        try:
-            def do_request():
+        def do_request():
+            if provider == "anthropic":
                 client = anthropic.Anthropic(
                     api_key=self._anthropic_settings.api_key,
                     timeout=self._ai_timeout_seconds,
@@ -355,17 +373,71 @@ Provide your analysis in 3-4 paragraphs. Be specific and reference the actual nu
                     messages=[{"role": "user", "content": prompt}],
                 )
 
+            if provider == "openai":
+                client = OpenAI(
+                    api_key=self._openai_settings.api_key,
+                    base_url=self._openai_settings.base_url,
+                    timeout=self._ai_timeout_seconds,
+                )
+                return client.chat.completions.create(
+                    model=self._openai_settings.model,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+            client = OpenAI(
+                api_key=self._grok_settings.api_key,
+                base_url=self._grok_settings.base_url,
+                timeout=self._ai_timeout_seconds,
+            )
+            return client.chat.completions.create(
+                model=self._grok_settings.model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        try:
             message = await asyncio.wait_for(
                 asyncio.to_thread(do_request),
                 timeout=self._ai_timeout_seconds,
             )
-            return message.content[0].text
+            if provider == "anthropic":
+                return message.content[0].text
+            return message.choices[0].message.content or ""
         except TimeoutError:
             logger.error("ai_insight_timeout", timeout=self._ai_timeout_seconds)
             return "AI insights unavailable: request timed out"
+        except anthropic.APIConnectionError as e:
+            logger.error("ai_insight_connection_failed", error=str(e))
+            return f"AI insights unavailable: {e}"
+        except anthropic.RateLimitError as e:
+            logger.error("ai_insight_rate_limited", error=str(e))
+            return "AI insights unavailable: rate limited"
+        except anthropic.APIStatusError as e:
+            logger.error("ai_insight_status_error", status=e.status_code, error=str(e))
+            return f"AI insights unavailable: {e}"
+        except openai.APIConnectionError as e:
+            logger.error("ai_insight_connection_failed", error=str(e))
+            return f"AI insights unavailable: {e}"
+        except openai.RateLimitError as e:
+            logger.error("ai_insight_rate_limited", error=str(e))
+            return "AI insights unavailable: rate limited"
+        except openai.APIStatusError as e:
+            logger.error("ai_insight_status_error", status=e.status_code, error=str(e))
+            return f"AI insights unavailable: {e}"
         except Exception as e:
             logger.error("ai_insight_generation_failed", error=str(e))
             return f"AI insights unavailable: {e}"
+
+    def _provider_configured(self, provider: str) -> bool:
+        """Check if the requested provider has credentials configured."""
+        if provider == "anthropic":
+            return bool(self._anthropic_settings.api_key)
+        if provider == "openai":
+            return bool(self._openai_settings.api_key)
+        if provider == "grok":
+            return bool(self._grok_settings.api_key)
+        return False
 
     def _format_metrics_for_ai(self, metrics: WeeklyMetrics) -> str:
         """Format metrics into a text summary for AI analysis.
@@ -547,6 +619,9 @@ async def generate_and_send_report(
     generator = WeeklyReportGenerator(
         influxdb_settings=settings.influxdb,
         anthropic_settings=settings.anthropic,
+        openai_settings=settings.openai,
+        grok_settings=settings.grok,
+        ai_provider=settings.insight.ai_provider,
         ai_timeout_seconds=settings.insight.ai_timeout_seconds,
     )
 
@@ -577,6 +652,8 @@ async def generate_and_send_report(
         # Generate insights using InsightEngine
         insight_engine = InsightEngine(
             anthropic_settings=settings.anthropic,
+            openai_settings=settings.openai,
+            grok_settings=settings.grok,
             insight_settings=settings.insight,
         )
         insights = await insight_engine.generate(privacy_safe)
@@ -640,6 +717,9 @@ async def main():
     generator = WeeklyReportGenerator(
         influxdb_settings=settings.influxdb,
         anthropic_settings=settings.anthropic,
+        openai_settings=settings.openai,
+        grok_settings=settings.grok,
+        ai_provider=settings.insight.ai_provider,
         ai_timeout_seconds=settings.insight.ai_timeout_seconds,
     )
 

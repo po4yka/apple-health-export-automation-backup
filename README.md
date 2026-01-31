@@ -8,7 +8,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 - **Resilient Ingestion**: Backpressure with bounded queue, raw payload archiving, deduplication, and DLQ handling
 - **Time-Series Storage**: Stores all metrics in InfluxDB 2.x with infinite retention
 - **Rich Dashboards**: Pre-configured Grafana dashboards for overview and trend monitoring across activity, heart rate, sleep, workouts, and vitals
-- **AI-Powered Insights**: Weekly health reports with personalized recommendations via Claude API
+- **AI-Powered Insights**: Weekly health reports with personalized recommendations via Anthropic, OpenAI, or Grok
 - **Docker Deployment**: Single command deployment with Docker Compose
 - **Extensible Transformers**: Modular architecture for adding new health metric types
 
@@ -40,7 +40,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 - **Python 3.13+** (for local development)
 - **[uv](https://github.com/astral-sh/uv)** package manager (for local development)
 - **Health Auto Export** iOS app (paid, ~$3)
-- **Anthropic API key** (optional, for AI-powered weekly reports)
+- **AI provider API key** (optional, for AI-powered weekly reports)
 
 ## Quick Start
 
@@ -63,6 +63,7 @@ INFLUXDB_ADMIN_PASSWORD=$(openssl rand -base64 16)
 GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 16)
 
 # Optional: For AI weekly reports
+INSIGHT_AI_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -303,7 +304,13 @@ apple-health-export-automation-backup/
 | `APP_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
 | `APP_LOG_FORMAT` | `json` | Log format (json, console) |
 | `APP_PROMETHEUS_PORT` | `9090` | Prometheus metrics server port |
+| `INSIGHT_AI_PROVIDER` | `anthropic` | AI provider for weekly reports (`anthropic`, `openai`, `grok`) |
 | `ANTHROPIC_API_KEY` | - | Anthropic API key for weekly reports |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model for weekly reports |
+| `OPENAI_API_KEY` | - | OpenAI API key for weekly reports |
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model for weekly reports |
+| `GROK_API_KEY` | - | Grok (xAI) API key for weekly reports |
+| `GROK_MODEL` | `grok-2-latest` | Grok (xAI) model for weekly reports |
 
 ### DLQ Categories
 
@@ -354,7 +361,7 @@ apple-health-export-automation-backup/
 
 ### Weekly report errors
 
-1. Verify `ANTHROPIC_API_KEY` is set correctly
+1. Verify the provider API key (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GROK_API_KEY`) is set correctly
 2. Check you have sufficient API credits
 3. View detailed logs:
    ```bash

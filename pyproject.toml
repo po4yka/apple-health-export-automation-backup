@@ -40,6 +40,7 @@ dependencies = [
     "opentelemetry-sdk>=1.36",
     "structlog>=25.5",
     "anthropic>=0.77",
+    "openai>=1.30,<2",
     "httpx>=0.28",
     "tenacity>=9.0",
     "prometheus-client>=0.21",
