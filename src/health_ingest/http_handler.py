@@ -151,6 +151,18 @@ class BotWebhookPayload(BaseModel):
     channel: str = "telegram"
 
 
+class BotCommandPayload(BaseModel):
+    """Request payload for synchronous bot command."""
+
+    message: str
+
+
+class BotCommandResponse(BaseModel):
+    """Response for synchronous bot command."""
+
+    text: str
+
+
 class ReplayResponse(BaseModel):
     """Response for replay requests."""
 
@@ -761,6 +773,40 @@ class HTTPHandler:
 
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/webhook", status="202").inc()
             return {"status": "accepted", "message": payload.message}
+
+        @app.post(
+            "/bot/command",
+            response_model=BotCommandResponse,
+            responses={
+                401: {"model": ErrorResponse},
+                500: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Synchronous bot command execution",
+        )
+        async def bot_command(
+            request: Request,
+            payload: BotCommandPayload,
+        ):
+            """Handle POST /bot/command -- execute a command and return the result."""
+            if not self._check_bot_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/command", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._bot_dispatcher:
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/command", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Bot unavailable")
+
+            try:
+                text = await self._bot_dispatcher.process_command(payload.message)
+            except Exception as exc:
+                logger.error("bot_command_error", error=str(exc))
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/command", status="500").inc()
+                return error_response(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR, "Command execution failed"
+                )
+
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/command", status="200").inc()
+            return BotCommandResponse(text=text)
 
         return app
 

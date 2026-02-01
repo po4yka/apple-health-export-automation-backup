@@ -130,3 +130,74 @@ class TestBotDispatcher:
         mock_send.assert_awaited_once()
         sent_text = mock_send.call_args[0][0]
         assert "Unable to fetch" in sent_text
+
+
+class TestProcessCommand:
+    """Tests for BotDispatcher.process_command() synchronous interface."""
+
+    async def test_returns_formatted_string_for_valid_command(self):
+        dispatcher = _make_dispatcher()
+        mock_data = SnapshotData(steps=5000, active_calories=200, exercise_min=15)
+
+        with patch.object(
+            dispatcher._query_service,
+            "fetch_snapshot",
+            new_callable=AsyncMock,
+            return_value=mock_data,
+        ):
+            result = await dispatcher.process_command("/health_now")
+
+        assert isinstance(result, str)
+        assert "5,000" in result
+
+    async def test_returns_error_string_for_parse_error(self):
+        dispatcher = _make_dispatcher()
+        result = await dispatcher.process_command("/foobar")
+
+        assert isinstance(result, str)
+        assert "Unknown command" in result
+
+    async def test_returns_error_string_for_missing_slash(self):
+        dispatcher = _make_dispatcher()
+        result = await dispatcher.process_command("no slash")
+
+        assert isinstance(result, str)
+        assert "Commands must start with /" in result
+
+    async def test_returns_timeout_message_on_slow_query(self):
+        dispatcher = _make_dispatcher(response_timeout=0.01)
+
+        async def _slow_fetch():
+            await asyncio.sleep(1.0)
+            return SnapshotData()
+
+        with patch.object(
+            dispatcher._query_service,
+            "fetch_snapshot",
+            side_effect=_slow_fetch,
+        ):
+            result = await dispatcher.process_command("/health_now")
+
+        assert isinstance(result, str)
+        assert "timed out" in result
+
+    async def test_returns_help_text(self):
+        dispatcher = _make_dispatcher()
+        result = await dispatcher.process_command("/health_help")
+
+        assert isinstance(result, str)
+        assert "/health_now" in result
+
+    async def test_returns_error_on_exception(self):
+        dispatcher = _make_dispatcher()
+
+        with patch.object(
+            dispatcher._query_service,
+            "fetch_snapshot",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("db down"),
+        ):
+            result = await dispatcher.process_command("/health_now")
+
+        assert isinstance(result, str)
+        assert "Unable to fetch" in result

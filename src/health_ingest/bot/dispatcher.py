@@ -35,27 +35,36 @@ class BotDispatcher:
         """
         logger.info("bot_webhook_received", message=message_text, user_id=user_id)
 
+        response_text = await self.process_command(message_text)
+        await self._send_response(response_text, user_id)
+
+        parsed = cmd.parse_command(message_text)
+        if isinstance(parsed, cmd.ParseError):
+            return {"status": "error", "message": parsed.message}
+        return {"status": "ok", "command": parsed.command.value}
+
+    async def process_command(self, message_text: str) -> str:
+        """Process a command and return formatted response text.
+
+        Parses the command, executes the query, and formats the result.
+        Always returns a string (error messages on failure).
+        """
         parsed = cmd.parse_command(message_text)
 
         if isinstance(parsed, cmd.ParseError):
-            response_text = fmt.format_error(parsed.message)
-            await self._send_response(response_text, user_id)
-            return {"status": "error", "message": parsed.message}
+            return fmt.format_error(parsed.message)
 
         try:
-            response_text = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 self._execute_command(parsed),
                 timeout=self._bot_settings.response_timeout_seconds,
             )
         except TimeoutError:
-            response_text = fmt.format_error("Query timed out. Please try again.")
             logger.warning("bot_command_timeout", command=parsed.command.value)
+            return fmt.format_error("Query timed out. Please try again.")
         except Exception as e:
-            response_text = fmt.format_error("Unable to fetch data. Please try again later.")
             logger.error("bot_command_error", command=parsed.command.value, error=str(e))
-
-        await self._send_response(response_text, user_id)
-        return {"status": "ok", "command": parsed.command.value}
+            return fmt.format_error("Unable to fetch data. Please try again later.")
 
     async def _execute_command(self, parsed: cmd.ParsedCommand) -> str:
         """Execute a parsed command and return formatted response text."""

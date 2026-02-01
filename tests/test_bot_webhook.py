@@ -141,3 +141,106 @@ class TestBotWebhookEndpoint:
 
         # Should return immediately, not wait for slow_handler
         assert resp.status_code == 202
+
+
+class TestBotCommandEndpoint:
+    """Tests for POST /bot/command synchronous endpoint."""
+
+    async def test_valid_command_returns_200_with_text(self):
+        mock_dispatcher = MagicMock()
+        mock_dispatcher.process_command = AsyncMock(return_value="Steps: 8,000")
+        handler = _make_handler(bot_dispatcher=mock_dispatcher)
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_now"},
+                headers={"Authorization": "Bearer test-bot-token"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["text"] == "Steps: 8,000"
+        mock_dispatcher.process_command.assert_awaited_once_with("/health_now")
+
+    async def test_missing_auth_returns_401(self):
+        mock_dispatcher = MagicMock()
+        handler = _make_handler(bot_dispatcher=mock_dispatcher)
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_now"},
+            )
+
+        assert resp.status_code == 401
+
+    async def test_wrong_token_returns_401(self):
+        mock_dispatcher = MagicMock()
+        handler = _make_handler(bot_dispatcher=mock_dispatcher)
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_now"},
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+
+        assert resp.status_code == 401
+
+    async def test_bot_disabled_returns_503(self):
+        handler = _make_handler(bot_dispatcher=None)
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_now"},
+                headers={"Authorization": "Bearer test-bot-token"},
+            )
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["error"] == "Bot unavailable"
+
+    async def test_no_auth_configured_allows_all(self):
+        mock_dispatcher = MagicMock()
+        mock_dispatcher.process_command = AsyncMock(return_value="OK")
+        handler = _make_handler(bot_dispatcher=mock_dispatcher, bot_webhook_token="")
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_help"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["text"] == "OK"
+
+    async def test_dispatcher_exception_returns_500(self):
+        mock_dispatcher = MagicMock()
+        mock_dispatcher.process_command = AsyncMock(side_effect=RuntimeError("boom"))
+        handler = _make_handler(bot_dispatcher=mock_dispatcher)
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_now"},
+                headers={"Authorization": "Bearer test-bot-token"},
+            )
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body["error"] == "Command execution failed"
+
+    async def test_missing_message_field_returns_422(self):
+        mock_dispatcher = MagicMock()
+        handler = _make_handler(bot_dispatcher=mock_dispatcher)
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={},
+                headers={"Authorization": "Bearer test-bot-token"},
+            )
+
+        assert resp.status_code == 422
