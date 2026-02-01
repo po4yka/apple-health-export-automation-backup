@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import structlog
 import uvicorn
@@ -134,6 +134,13 @@ class WeeklyReportRequest(BaseModel):
     end_date: datetime | None = None
 
 
+class DailyReportRequest(BaseModel):
+    """Request payload for daily report generation."""
+
+    mode: Literal["morning", "evening"]
+    reference_time: datetime | None = None
+
+
 class ReplayResponse(BaseModel):
     """Response for replay requests."""
 
@@ -160,6 +167,7 @@ class HTTPHandler:
         dlq: Any | None = None,
         status_provider: Callable[[], ServiceStatusSnapshot] | None = None,
         report_callback: Callable[[datetime | None], Awaitable[str]] | None = None,
+        daily_report_callback: Callable[[str, datetime | None], Awaitable[str]] | None = None,
     ) -> None:
         self._settings = settings
         self._message_callback = message_callback
@@ -167,6 +175,7 @@ class HTTPHandler:
         self._dlq = dlq
         self._status_provider = status_provider
         self._report_callback = report_callback
+        self._daily_report_callback = daily_report_callback
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
@@ -667,6 +676,39 @@ class HTTPHandler:
                     status.HTTP_500_INTERNAL_SERVER_ERROR, "Report generation failed"
                 )
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/weekly", status="200").inc()
+            return {"status": "generated", "report": report}
+
+        @app.post(
+            "/reports/daily",
+            response_model=dict[str, Any],
+            responses={
+                401: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Generate daily report",
+        )
+        async def generate_daily_report(
+            request: Request,
+            payload: DailyReportRequest,
+        ):
+            """Handle POST /reports/daily -- generate daily summary."""
+            if not self._check_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._daily_report_callback:
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="503").inc()
+                return error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "Daily report generator unavailable"
+                )
+            try:
+                report = await self._daily_report_callback(payload.mode, payload.reference_time)
+            except Exception as exc:
+                logger.error("daily_report_failed", error=str(exc))
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="500").inc()
+                return error_response(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR, "Daily report generation failed"
+                )
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="200").inc()
             return {"status": "generated", "report": report}
 
         return app

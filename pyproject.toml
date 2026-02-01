@@ -76,6 +76,8 @@ health-dlq-inspect = "health_ingest.cli:dlq_inspect"
 health-dlq-replay = "health_ingest.cli:dlq_replay"
 health-query = "health_ingest.query:query_cli"
 health-duckdb = "health_ingest.duckdb_analytics:duckdb_cli"
+health-daily = "health_ingest.reports.daily:run_daily_report"
+health-daily-send = "health_ingest.reports.daily:run_daily_report_and_send"
 
 [build-system]
 requires = ["hatchling"]
@@ -95,6 +97,7 @@ ignore = ["N815", "SIM105"]  # N815: Allow camelCase for Pydantic JSON aliases; 
 [tool.ruff.lint.per-file-ignores]
 "src/health_ingest/reports/weekly.py" = ["E501"]  # Long Flux queries
 "src/health_ingest/reports/rules.py" = ["E501"]  # Rule content strings
+"src/health_ingest/reports/daily.py" = ["E501"]  # Long Flux queries
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

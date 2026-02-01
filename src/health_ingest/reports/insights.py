@@ -9,7 +9,7 @@ import structlog
 from openai import OpenAI
 
 from ..config import AnthropicSettings, GrokSettings, InsightSettings, OpenAISettings
-from .models import InsightResult, PrivacySafeMetrics
+from .models import InsightResult, PrivacySafeDailyMetrics, PrivacySafeMetrics
 from .rules import RuleEngine
 
 logger = structlog.get_logger(__name__)
@@ -46,6 +46,44 @@ Example format:
 
 Only return the JSON array, no other text."""
 
+DAILY_MORNING_PROMPT = """You are a personal health coach providing a brief morning briefing. \
+Analyze these health metrics from last night's sleep and recent vitals.
+
+IMPORTANT: Keep it concise — 2-3 short insights maximum. Focus on sleep recovery and \
+setting up a good day.
+
+TODAY'S METRICS:
+{metrics_text}
+
+Generate {max_insights} health insights. For each insight, provide:
+1. category: One of "sleep", "heart", "activity", "workouts"
+2. headline: A concise summary (max 60 characters)
+3. reasoning: Brief explanation referencing specific numbers
+4. recommendation: One specific tip for today
+
+Return your response as a JSON array of objects with these exact fields: \
+category, headline, reasoning, recommendation.
+Only return the JSON array, no other text."""
+
+DAILY_EVENING_PROMPT = """You are a personal health coach providing an evening recap. \
+Analyze today's activity, workouts, and vitals.
+
+IMPORTANT: Keep it concise — 2-3 short insights maximum. Focus on today's achievements \
+and recovery suggestions for tonight.
+
+TODAY'S METRICS:
+{metrics_text}
+
+Generate {max_insights} health insights. For each insight, provide:
+1. category: One of "activity", "heart", "workouts", "sleep"
+2. headline: A concise summary (max 60 characters)
+3. reasoning: Brief explanation referencing specific numbers
+4. recommendation: One specific suggestion for recovery tonight
+
+Return your response as a JSON array of objects with these exact fields: \
+category, headline, reasoning, recommendation.
+Only return the JSON array, no other text."""
+
 
 class InsightEngine:
     """Generates health insights with AI primary, rule-based fallback."""
@@ -71,23 +109,37 @@ class InsightEngine:
         self._insight_settings = insight_settings
         self._rule_engine = RuleEngine()
 
-    async def generate(self, metrics: PrivacySafeMetrics) -> list[InsightResult]:
+    async def generate(
+        self,
+        metrics: PrivacySafeMetrics | PrivacySafeDailyMetrics,
+        prompt_template: str | None = None,
+        max_insights_override: int | None = None,
+    ) -> list[InsightResult]:
         """Generate insights from metrics.
 
         Uses AI when available and configured, falls back to rules otherwise.
 
         Args:
-            metrics: Privacy-safe aggregated metrics.
+            metrics: Privacy-safe aggregated metrics (weekly or daily).
+            prompt_template: Optional prompt template to use instead of default.
+            max_insights_override: Optional max insights override.
 
         Returns:
             List of InsightResult objects.
         """
+        max_insights = max_insights_override or self._insight_settings.max_insights
+
         # Try AI first if configured and preferred
         provider = self._insight_settings.ai_provider
         if self._insight_settings.prefer_ai and self._provider_configured(provider):
             if provider == "anthropic":
                 try:
-                    insights = await self._generate_ai_insights(metrics, provider)
+                    insights = await self._generate_ai_insights(
+                        metrics,
+                        provider,
+                        prompt_template,
+                        max_insights,
+                    )
                     if insights:
                         logger.info("insights_generated", source="ai", count=len(insights))
                         return insights
@@ -111,7 +163,12 @@ class InsightEngine:
                     )
             else:
                 try:
-                    insights = await self._generate_ai_insights(metrics, provider)
+                    insights = await self._generate_ai_insights(
+                        metrics,
+                        provider,
+                        prompt_template,
+                        max_insights,
+                    )
                     if insights:
                         logger.info("insights_generated", source="ai", count=len(insights))
                         return insights
@@ -135,7 +192,10 @@ class InsightEngine:
                     )
 
         # Fall back to rule-based insights
-        insights = self._generate_rule_based(metrics)
+        if isinstance(metrics, PrivacySafeDailyMetrics):
+            insights = self._generate_daily_rule_based(metrics, max_insights)
+        else:
+            insights = self._generate_rule_based(metrics, max_insights)
         logger.info("insights_generated", source="rule", count=len(insights))
         return insights
 
@@ -151,22 +211,28 @@ class InsightEngine:
 
     async def _generate_ai_insights(
         self,
-        metrics: PrivacySafeMetrics,
+        metrics: PrivacySafeMetrics | PrivacySafeDailyMetrics,
         provider: str,
+        prompt_template: str | None = None,
+        max_insights: int | None = None,
     ) -> list[InsightResult]:
         """Generate insights using the configured AI provider.
 
         Args:
             metrics: Privacy-safe metrics.
             provider: AI provider identifier.
+            prompt_template: Optional prompt template override.
+            max_insights: Optional max insights override.
 
         Returns:
             List of AI-generated insights.
         """
+        effective_max = max_insights or self._insight_settings.max_insights
+        effective_template = prompt_template or INSIGHT_PROMPT
         metrics_text = metrics.to_summary_text()
-        prompt = INSIGHT_PROMPT.format(
+        prompt = effective_template.format(
             metrics_text=metrics_text,
-            max_insights=self._insight_settings.max_insights,
+            max_insights=effective_max,
         )
 
         def do_request():
@@ -229,7 +295,7 @@ class InsightEngine:
             insights_data = json.loads(response_text)
 
             insights = []
-            for item in insights_data[: self._insight_settings.max_insights]:
+            for item in insights_data[:effective_max]:
                 insights.append(
                     InsightResult(
                         category=item.get("category", "general"),
@@ -247,16 +313,40 @@ class InsightEngine:
             logger.warning("ai_response_parse_error", error=str(e), response=response_text[:200])
             return []
 
-    def _generate_rule_based(self, metrics: PrivacySafeMetrics) -> list[InsightResult]:
+    def _generate_rule_based(
+        self,
+        metrics: PrivacySafeMetrics,
+        max_insights: int | None = None,
+    ) -> list[InsightResult]:
         """Generate insights using predefined rules.
 
         Args:
             metrics: Privacy-safe metrics.
+            max_insights: Optional max insights override.
 
         Returns:
             List of rule-based insights.
         """
         return self._rule_engine.evaluate(
             metrics,
-            max_insights=self._insight_settings.max_insights,
+            max_insights=max_insights or self._insight_settings.max_insights,
+        )
+
+    def _generate_daily_rule_based(
+        self,
+        metrics: PrivacySafeDailyMetrics,
+        max_insights: int | None = None,
+    ) -> list[InsightResult]:
+        """Generate daily insights using predefined rules.
+
+        Args:
+            metrics: Privacy-safe daily metrics.
+            max_insights: Optional max insights override.
+
+        Returns:
+            List of rule-based insights.
+        """
+        return self._rule_engine.evaluate_daily(
+            metrics,
+            max_insights=max_insights or 3,
         )

@@ -151,6 +151,7 @@ class HealthIngestService:
                 dlq=self._dlq,
                 status_provider=self._status_snapshot,
                 report_callback=self._generate_weekly_report,
+                daily_report_callback=self._generate_daily_report,
             )
             await self._http_handler.start()
 
@@ -262,6 +263,25 @@ class HealthIngestService:
         await generator.connect()
         try:
             return await generator.generate_report(end_date=end_date)
+        finally:
+            await generator.disconnect()
+
+    async def _generate_daily_report(self, mode: str, reference_time: datetime | None) -> str:
+        """Generate a daily report using configured settings."""
+        from .reports.daily import DailyReportGenerator
+        from .reports.models import SummaryMode
+
+        generator = DailyReportGenerator(
+            influxdb_settings=self._settings.influxdb,
+            anthropic_settings=self._settings.anthropic,
+            openai_settings=self._settings.openai,
+            grok_settings=self._settings.grok,
+            ai_provider=self._settings.insight.ai_provider,
+            ai_timeout_seconds=self._settings.insight.ai_timeout_seconds,
+        )
+        await generator.connect()
+        try:
+            return await generator.generate_summary(SummaryMode(mode), reference_time)
         finally:
             await generator.disconnect()
 
