@@ -7,17 +7,17 @@ from enum import Enum
 class BotCommand(str, Enum):
     """Supported bot commands."""
 
-    NOW = "now"
-    HEART = "heart"
-    SLEEP = "sleep"
-    WEIGHT = "weight"
-    TODAY = "today"
-    YESTERDAY = "yesterday"
-    WEEK = "week"
-    STEPS = "steps"
-    WORKOUTS = "workouts"
-    TRENDS = "trends"
-    HELP = "help"
+    NOW = "health_now"
+    HEART = "health_heart"
+    SLEEP = "health_sleep"
+    WEIGHT = "health_weight"
+    TODAY = "health_today"
+    YESTERDAY = "health_yesterday"
+    WEEK = "health_week"
+    STEPS = "health_steps"
+    WORKOUTS = "health_workouts"
+    TRENDS = "health_trends"
+    HELP = "health_help"
 
 
 COMMAND_DESCRIPTIONS: dict[BotCommand, str] = {
@@ -61,7 +61,7 @@ def parse_command(text: str) -> ParsedCommand | ParseError:
     """Parse a bot command string into a ParsedCommand or ParseError.
 
     Args:
-        text: Raw message text, e.g. "/now" or "/steps 30d".
+        text: Raw message text, e.g. "/health_now" or "/health_steps 30d".
 
     Returns:
         ParsedCommand on success, ParseError on failure.
@@ -71,14 +71,14 @@ def parse_command(text: str) -> ParsedCommand | ParseError:
 
     if not text.startswith("/"):
         return ParseError(
-            message="Commands must start with /. Use /help for available commands.",
+            message="Commands must start with /. Use /health_help for available commands.",
             raw_text=raw_text,
         )
 
     parts = text[1:].lower().split(None, 1)
     if not parts:
         return ParseError(
-            message="Empty command. Use /help for available commands.",
+            message="Empty command. Use /health_help for available commands.",
             raw_text=raw_text,
         )
 
@@ -88,7 +88,7 @@ def parse_command(text: str) -> ParsedCommand | ParseError:
         command = BotCommand(cmd_str)
     except ValueError:
         return ParseError(
-            message=f"Unknown command: /{cmd_str}. Use /help for available commands.",
+            message=f"Unknown command: /{cmd_str}. Use /health_help for available commands.",
             raw_text=raw_text,
         )
 

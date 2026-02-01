@@ -13,47 +13,47 @@ class TestParseCommand:
     """Tests for parse_command()."""
 
     def test_parse_now(self):
-        result = parse_command("/now")
+        result = parse_command("/health_now")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.NOW
         assert result.period == DEFAULT_PERIOD
 
     def test_parse_help(self):
-        result = parse_command("/help")
+        result = parse_command("/health_help")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.HELP
 
     def test_parse_steps_with_period(self):
-        result = parse_command("/steps 30d")
+        result = parse_command("/health_steps 30d")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.STEPS
         assert result.period == "30d"
 
     def test_parse_steps_default_period(self):
-        result = parse_command("/steps")
+        result = parse_command("/health_steps")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.STEPS
         assert result.period == DEFAULT_PERIOD
 
     def test_parse_workouts_with_period(self):
-        result = parse_command("/workouts 14d")
+        result = parse_command("/health_workouts 14d")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.WORKOUTS
         assert result.period == "14d"
 
     def test_case_insensitive(self):
-        result = parse_command("/NOW")
+        result = parse_command("/HEALTH_NOW")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.NOW
 
     def test_mixed_case(self):
-        result = parse_command("/Steps 7d")
+        result = parse_command("/Health_Steps 7d")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.STEPS
         assert result.period == "7d"
 
     def test_leading_trailing_whitespace(self):
-        result = parse_command("  /now  ")
+        result = parse_command("  /health_now  ")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.NOW
 
@@ -80,19 +80,19 @@ class TestParseCommand:
         assert "Empty command" in result.message
 
     def test_invalid_period(self):
-        result = parse_command("/steps 5d")
+        result = parse_command("/health_steps 5d")
         assert isinstance(result, ParseError)
         assert "Invalid period" in result.message
 
     def test_extra_args_ignored_for_non_period_commands(self):
-        result = parse_command("/now extra stuff")
+        result = parse_command("/health_now extra stuff")
         assert isinstance(result, ParsedCommand)
         assert result.command == BotCommand.NOW
 
     def test_raw_text_preserved(self):
-        result = parse_command("/steps 30d")
+        result = parse_command("/health_steps 30d")
         assert isinstance(result, ParsedCommand)
-        assert result.raw_text == "/steps 30d"
+        assert result.raw_text == "/health_steps 30d"
 
     def test_raw_text_preserved_on_error(self):
         result = parse_command("bad")

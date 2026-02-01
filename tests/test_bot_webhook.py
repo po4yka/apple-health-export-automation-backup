@@ -45,7 +45,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/now", "user_id": 123456},
+                json={"message": "/health_now", "user_id": 123456},
                 headers={"Authorization": "Bearer test-bot-token"},
             )
 
@@ -62,7 +62,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/now", "user_id": 123456},
+                json={"message": "/health_now", "user_id": 123456},
             )
 
         assert resp.status_code == 401
@@ -74,7 +74,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/now", "user_id": 123456},
+                json={"message": "/health_now", "user_id": 123456},
                 headers={"Authorization": "Bearer wrong-token"},
             )
 
@@ -86,7 +86,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/now", "user_id": 123456},
+                json={"message": "/health_now", "user_id": 123456},
                 headers={"Authorization": "Bearer test-bot-token"},
             )
 
@@ -102,7 +102,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/help", "user_id": 999},
+                json={"message": "/health_help", "user_id": 999},
             )
 
         assert resp.status_code == 202
@@ -115,7 +115,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/now"},  # missing user_id
+                json={"message": "/health_now"},  # missing user_id
                 headers={"Authorization": "Bearer test-bot-token"},
             )
 
@@ -135,7 +135,7 @@ class TestBotWebhookEndpoint:
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/bot/webhook",
-                json={"message": "/now", "user_id": 123456},
+                json={"message": "/health_now", "user_id": 123456},
                 headers={"Authorization": "Bearer test-bot-token"},
             )
 

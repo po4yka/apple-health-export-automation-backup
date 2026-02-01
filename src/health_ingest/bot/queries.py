@@ -145,7 +145,7 @@ class BotQueryService:
         return local_midnight.astimezone(UTC)
 
     async def fetch_snapshot(self) -> SnapshotData:
-        """Fetch quick snapshot data for /now command."""
+        """Fetch quick snapshot data for /health_now command."""
         data = SnapshotData()
         now_utc = datetime.now(UTC)
         start = self._today_midnight_utc()
@@ -223,7 +223,7 @@ class BotQueryService:
         return data
 
     async def fetch_heart(self) -> HeartData:
-        """Fetch heart data for /heart command."""
+        """Fetch heart data for /health_heart command."""
         data = HeartData()
         now_utc = datetime.now(UTC)
         start = self._today_midnight_utc()
@@ -293,7 +293,7 @@ class BotQueryService:
         return data
 
     async def fetch_sleep(self) -> SleepData:
-        """Fetch sleep data for /sleep command."""
+        """Fetch sleep data for /health_sleep command."""
         data = SleepData()
         ref = self._now_tbilisi()
         today_midnight = ref.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -338,7 +338,7 @@ class BotQueryService:
         return data
 
     async def fetch_weight(self) -> WeightData:
-        """Fetch weight data for /weight command."""
+        """Fetch weight data for /health_weight command."""
         data = WeightData()
         now_utc = datetime.now(UTC)
         thirty_days_ago = now_utc - timedelta(days=30)
@@ -437,7 +437,7 @@ class BotQueryService:
         return data
 
     async def fetch_day_summary(self, day_offset: int = 0) -> DaySummaryData:
-        """Fetch full day summary for /today or /yesterday.
+        """Fetch full day summary for /health_today or /health_yesterday.
 
         Args:
             day_offset: 0 for today, -1 for yesterday.
@@ -551,7 +551,7 @@ class BotQueryService:
         return data
 
     async def fetch_week_summary(self) -> DaySummaryData:
-        """Fetch aggregated data for the last 7 days for /week command."""
+        """Fetch aggregated data for the last 7 days for /health_week command."""
         data = DaySummaryData()
         now_utc = datetime.now(UTC)
         seven_days_ago = self._today_midnight_utc() - timedelta(days=6)
@@ -652,7 +652,7 @@ class BotQueryService:
         return data
 
     async def fetch_steps(self, period: str) -> StepsDailyBreakdown:
-        """Fetch steps with daily breakdown for /steps command."""
+        """Fetch steps with daily breakdown for /health_steps command."""
         data = StepsDailyBreakdown()
         days = _period_days(period)
         now_utc = datetime.now(UTC)
@@ -695,7 +695,7 @@ class BotQueryService:
         return data
 
     async def fetch_workouts(self, period: str) -> list[WorkoutEntry]:
-        """Fetch workout list for /workouts command."""
+        """Fetch workout list for /health_workouts command."""
         entries: list[WorkoutEntry] = []
         days = _period_days(period)
         now_utc = datetime.now(UTC)
@@ -748,7 +748,7 @@ class BotQueryService:
         return entries
 
     async def fetch_trends(self) -> TrendsData:
-        """Fetch this week vs last week comparison for /trends command."""
+        """Fetch this week vs last week comparison for /health_trends command."""
         data = TrendsData()
         now_utc = datetime.now(UTC)
         one_week_ago = self._today_midnight_utc() - timedelta(days=6)

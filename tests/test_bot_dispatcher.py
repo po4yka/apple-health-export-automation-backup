@@ -51,10 +51,10 @@ class TestBotDispatcher:
             patch.object(dispatcher, "_send_response", new_callable=AsyncMock) as mock_send,
         ):
             mock_fetch.return_value = mock_data
-            result = await dispatcher.handle_webhook("/now", 123456)
+            result = await dispatcher.handle_webhook("/health_now", 123456)
 
         assert result["status"] == "ok"
-        assert result["command"] == "now"
+        assert result["command"] == "health_now"
         mock_fetch.assert_awaited_once()
         mock_send.assert_awaited_once()
         sent_text = mock_send.call_args[0][0]
@@ -64,13 +64,13 @@ class TestBotDispatcher:
         dispatcher = _make_dispatcher()
 
         with patch.object(dispatcher, "_send_response", new_callable=AsyncMock) as mock_send:
-            result = await dispatcher.handle_webhook("/help", 123456)
+            result = await dispatcher.handle_webhook("/health_help", 123456)
 
         assert result["status"] == "ok"
-        assert result["command"] == "help"
+        assert result["command"] == "health_help"
         mock_send.assert_awaited_once()
         sent_text = mock_send.call_args[0][0]
-        assert "/now" in sent_text
+        assert "/health_now" in sent_text
 
     async def test_dispatch_unknown_command(self):
         dispatcher = _make_dispatcher()
@@ -107,7 +107,7 @@ class TestBotDispatcher:
             ),
             patch.object(dispatcher, "_send_response", new_callable=AsyncMock) as mock_send,
         ):
-            await dispatcher.handle_webhook("/now", 123456)
+            await dispatcher.handle_webhook("/health_now", 123456)
 
         mock_send.assert_awaited_once()
         sent_text = mock_send.call_args[0][0]
@@ -125,7 +125,7 @@ class TestBotDispatcher:
             ),
             patch.object(dispatcher, "_send_response", new_callable=AsyncMock) as mock_send,
         ):
-            await dispatcher.handle_webhook("/now", 123456)
+            await dispatcher.handle_webhook("/health_now", 123456)
 
         mock_send.assert_awaited_once()
         sent_text = mock_send.call_args[0][0]

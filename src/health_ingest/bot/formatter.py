@@ -35,7 +35,7 @@ def _trend_arrow(current: float | None, previous: float | None) -> str:
 
 
 def format_snapshot(data: SnapshotData) -> str:
-    """Format /now quick snapshot."""
+    """Format /health_now quick snapshot."""
     lines = ["*📊 Quick Snapshot*", ""]
     lines.append(f"🚶 Steps: *{data.steps:,}*")
     lines.append(f"🔥 Calories: *{data.active_calories:,}* kcal")
@@ -50,7 +50,7 @@ def format_snapshot(data: SnapshotData) -> str:
 
 
 def format_heart(data: HeartData) -> str:
-    """Format /heart response."""
+    """Format /health_heart response."""
     lines = ["*❤️ Heart Rate & HRV*", ""]
 
     if data.resting_hr is not None:
@@ -75,7 +75,7 @@ def format_heart(data: HeartData) -> str:
 
 
 def format_sleep(data: SleepData) -> str:
-    """Format /sleep response."""
+    """Format /health_sleep response."""
     lines = ["*🌙 Last Night's Sleep*", ""]
 
     if data.duration_min is not None:
@@ -96,7 +96,7 @@ def format_sleep(data: SleepData) -> str:
 
 
 def format_weight(data: WeightData) -> str:
-    """Format /weight response."""
+    """Format /health_weight response."""
     lines = ["*⚖️ Weight*", ""]
 
     if data.latest_kg is not None:
@@ -118,7 +118,7 @@ def format_weight(data: WeightData) -> str:
 
 
 def format_day_summary(data: DaySummaryData, label: str) -> str:
-    """Format /today, /yesterday, or /week response."""
+    """Format /health_today, /health_yesterday, or /health_week response."""
     lines = [f"*📋 {label}*", ""]
     lines.append(f"🚶 Steps: *{data.steps:,}*")
     lines.append(f"🔥 Calories: *{data.active_calories:,}* kcal")
@@ -142,7 +142,7 @@ def format_day_summary(data: DaySummaryData, label: str) -> str:
 
 
 def format_steps(data: StepsDailyBreakdown, period: str) -> str:
-    """Format /steps response."""
+    """Format /health_steps response."""
     lines = [f"*🚶 Steps ({period})*", ""]
     lines.append(f"Total: *{data.total:,}*")
     lines.append(f"Daily avg: *{data.daily_avg:,}*")
@@ -157,7 +157,7 @@ def format_steps(data: StepsDailyBreakdown, period: str) -> str:
 
 
 def format_workouts(entries: list[WorkoutEntry], period: str) -> str:
-    """Format /workouts response."""
+    """Format /health_workouts response."""
     lines = [f"*🏋️ Workouts ({period})*", ""]
 
     if not entries:
@@ -189,7 +189,7 @@ def format_workouts(entries: list[WorkoutEntry], period: str) -> str:
 
 
 def format_trends(data: TrendsData) -> str:
-    """Format /trends response."""
+    """Format /health_trends response."""
     lines = ["*📈 Trends (This Week vs Last)*", ""]
 
     def _row(
@@ -224,7 +224,7 @@ def format_trends(data: TrendsData) -> str:
 
 
 def format_help() -> str:
-    """Format /help response."""
+    """Format /health_help response."""
     lines = ["*🤖 Health Bot Commands*", ""]
     for cmd, desc in COMMAND_DESCRIPTIONS.items():
         lines.append(f"/{cmd.value} — {desc}")
