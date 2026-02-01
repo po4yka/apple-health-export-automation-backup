@@ -149,6 +149,7 @@ class BotQueryService:
         data = SnapshotData()
         now_utc = datetime.now(UTC)
         start = self._today_midnight_utc()
+        logger.info("bot_snapshot_query", start=start.isoformat(), stop=now_utc.isoformat())
 
         client = self._make_client()
         try:
@@ -210,8 +211,12 @@ class BotQueryService:
                 for record in table.records:
                     data.weight_kg = float(record.get_value())
 
-        except Exception as e:
-            logger.warning("bot_snapshot_query_failed", error=str(e))
+            logger.info(
+                "bot_snapshot_result",
+                steps=data.steps,
+                resting_hr=data.resting_hr,
+                weight_kg=data.weight_kg,
+            )
         finally:
             await client.close()
 
@@ -223,6 +228,7 @@ class BotQueryService:
         now_utc = datetime.now(UTC)
         start = self._today_midnight_utc()
         seven_days_ago = now_utc - timedelta(days=7)
+        logger.info("bot_heart_query", start=start.isoformat(), stop=now_utc.isoformat())
 
         client = self._make_client()
         try:
@@ -276,8 +282,11 @@ class BotQueryService:
                     elif field == "hrv_ms":
                         data.avg_7d_hrv_ms = value
 
-        except Exception as e:
-            logger.warning("bot_heart_query_failed", error=str(e))
+            logger.info(
+                "bot_heart_result",
+                resting_hr=data.resting_hr,
+                hrv_ms=data.hrv_ms,
+            )
         finally:
             await client.close()
 
@@ -290,6 +299,7 @@ class BotQueryService:
         today_midnight = ref.replace(hour=0, minute=0, second=0, microsecond=0)
         sleep_start = (today_midnight - timedelta(days=1)).replace(hour=18).astimezone(UTC)
         sleep_stop = today_midnight.replace(hour=12).astimezone(UTC)
+        logger.info("bot_sleep_query", start=sleep_start.isoformat(), stop=sleep_stop.isoformat())
 
         client = self._make_client()
         try:
@@ -321,8 +331,7 @@ class BotQueryService:
                     elif field == "quality_score":
                         data.quality_score = value
 
-        except Exception as e:
-            logger.warning("bot_sleep_query_failed", error=str(e))
+            logger.info("bot_sleep_result", duration_min=data.duration_min)
         finally:
             await client.close()
 
@@ -334,6 +343,7 @@ class BotQueryService:
         now_utc = datetime.now(UTC)
         thirty_days_ago = now_utc - timedelta(days=30)
         seven_days_ago = now_utc - timedelta(days=7)
+        logger.info("bot_weight_query", start=thirty_days_ago.isoformat(), stop=now_utc.isoformat())
 
         client = self._make_client()
         try:
@@ -420,8 +430,7 @@ class BotQueryService:
             if data.latest_kg is not None and first_30d_val is not None:
                 data.change_30d = data.latest_kg - first_30d_val
 
-        except Exception as e:
-            logger.warning("bot_weight_query_failed", error=str(e))
+            logger.info("bot_weight_result", latest_kg=data.latest_kg)
         finally:
             await client.close()
 
@@ -442,6 +451,12 @@ class BotQueryService:
 
         start_utc = day_start.astimezone(UTC)
         stop_utc = day_stop.astimezone(UTC)
+        logger.info(
+            "bot_day_summary_query",
+            day_offset=day_offset,
+            start=start_utc.isoformat(),
+            stop=stop_utc.isoformat(),
+        )
 
         client = self._make_client()
         try:
@@ -469,7 +484,7 @@ class BotQueryService:
             from(bucket: "{self._settings.bucket}")
                 |> range(start: {start_utc.isoformat()}, stop: {stop_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "workout")
-                |> filter(fn: (r) => r._field == "duration_min" or r._field == "active_calories" or r._field == "distance_m")
+                |> filter(fn: (r) => r._field == "duration_min" or r._field == "calories" or r._field == "distance_m")
             """
 
             activity_t, heart_t, workout_t = await asyncio.gather(
@@ -516,8 +531,8 @@ class BotQueryService:
                 parts = [w.get("type", "Workout")]
                 if "duration_min" in w:
                     parts.append(f"{w['duration_min']:.0f}min")
-                if "active_calories" in w:
-                    parts.append(f"{w['active_calories']:.0f}cal")
+                if "calories" in w:
+                    parts.append(f"{w['calories']:.0f}cal")
                 if "distance_m" in w and w["distance_m"]:
                     parts.append(f"{w['distance_m'] / 1000:.1f}km")
                 summary = (
@@ -525,8 +540,11 @@ class BotQueryService:
                 )
                 data.workout_summaries.append(summary)
 
-        except Exception as e:
-            logger.warning("bot_day_summary_query_failed", error=str(e), day_offset=day_offset)
+            logger.info(
+                "bot_day_summary_result",
+                steps=data.steps,
+                workouts=len(data.workout_summaries),
+            )
         finally:
             await client.close()
 
@@ -537,6 +555,11 @@ class BotQueryService:
         data = DaySummaryData()
         now_utc = datetime.now(UTC)
         seven_days_ago = self._today_midnight_utc() - timedelta(days=6)
+        logger.info(
+            "bot_week_summary_query",
+            start=seven_days_ago.isoformat(),
+            stop=now_utc.isoformat(),
+        )
 
         client = self._make_client()
         try:
@@ -564,7 +587,7 @@ class BotQueryService:
             from(bucket: "{self._settings.bucket}")
                 |> range(start: {seven_days_ago.isoformat()}, stop: {now_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "workout")
-                |> filter(fn: (r) => r._field == "duration_min" or r._field == "active_calories" or r._field == "distance_m")
+                |> filter(fn: (r) => r._field == "duration_min" or r._field == "calories" or r._field == "distance_m")
             """
 
             activity_t, heart_t, workout_t = await asyncio.gather(
@@ -611,15 +634,18 @@ class BotQueryService:
                 parts = [w.get("type", "Workout")]
                 if "duration_min" in w:
                     parts.append(f"{w['duration_min']:.0f}min")
-                if "active_calories" in w:
-                    parts.append(f"{w['active_calories']:.0f}cal")
+                if "calories" in w:
+                    parts.append(f"{w['calories']:.0f}cal")
                 summary = (
                     ": ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]
                 )
                 data.workout_summaries.append(summary)
 
-        except Exception as e:
-            logger.warning("bot_week_summary_query_failed", error=str(e))
+            logger.info(
+                "bot_week_summary_result",
+                steps=data.steps,
+                workouts=len(data.workout_summaries),
+            )
         finally:
             await client.close()
 
@@ -631,6 +657,7 @@ class BotQueryService:
         days = _period_days(period)
         now_utc = datetime.now(UTC)
         start = self._today_midnight_utc() - timedelta(days=days - 1)
+        logger.info("bot_steps_query", period=period, start=start.isoformat())
 
         client = self._make_client()
         try:
@@ -661,8 +688,7 @@ class BotQueryService:
             data.daily = daily
             data.daily_avg = total // max(len(daily), 1)
 
-        except Exception as e:
-            logger.warning("bot_steps_query_failed", error=str(e))
+            logger.info("bot_steps_result", total=data.total, days=len(daily))
         finally:
             await client.close()
 
@@ -674,6 +700,7 @@ class BotQueryService:
         days = _period_days(period)
         now_utc = datetime.now(UTC)
         start = now_utc - timedelta(days=days)
+        logger.info("bot_workouts_query", period=period, start=start.isoformat())
 
         client = self._make_client()
         try:
@@ -683,7 +710,7 @@ class BotQueryService:
             from(bucket: "{self._settings.bucket}")
                 |> range(start: {start.isoformat()}, stop: {now_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "workout")
-                |> filter(fn: (r) => r._field == "duration_min" or r._field == "active_calories" or r._field == "distance_m" or r._field == "avg_hr" or r._field == "max_hr")
+                |> filter(fn: (r) => r._field == "duration_min" or r._field == "calories" or r._field == "distance_m" or r._field == "avg_hr" or r._field == "max_hr")
             """
 
             tables = await query_api.query(query)
@@ -704,7 +731,7 @@ class BotQueryService:
                     workout_type=w.get("type", "Unknown"),
                     date=ts.strftime("%Y-%m-%d %H:%M") if ts else "",
                     duration_min=float(w.get("duration_min", 0)),
-                    calories=float(w.get("active_calories", 0)),
+                    calories=float(w.get("calories", 0)),
                 )
                 if "distance_m" in w and w["distance_m"]:
                     entry.distance_km = float(w["distance_m"]) / 1000
@@ -714,8 +741,7 @@ class BotQueryService:
                     entry.max_hr = float(w["max_hr"])
                 entries.append(entry)
 
-        except Exception as e:
-            logger.warning("bot_workouts_query_failed", error=str(e))
+            logger.info("bot_workouts_result", count=len(entries))
         finally:
             await client.close()
 
@@ -727,6 +753,7 @@ class BotQueryService:
         now_utc = datetime.now(UTC)
         one_week_ago = self._today_midnight_utc() - timedelta(days=6)
         two_weeks_ago = one_week_ago - timedelta(days=7)
+        logger.info("bot_trends_query", start=two_weeks_ago.isoformat(), stop=now_utc.isoformat())
 
         client = self._make_client()
         try:
@@ -827,8 +854,11 @@ class BotQueryService:
             data.this_week_weight = this_weight
             data.last_week_weight = last_weight
 
-        except Exception as e:
-            logger.warning("bot_trends_query_failed", error=str(e))
+            logger.info(
+                "bot_trends_result",
+                this_week_steps=data.this_week_steps,
+                last_week_steps=data.last_week_steps,
+            )
         finally:
             await client.close()
 

@@ -284,7 +284,7 @@ class DailyReportGenerator:
         from(bucket: "{self._influxdb_settings.bucket}")
             |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
             |> filter(fn: (r) => r._measurement == "workout")
-            |> filter(fn: (r) => r._field == "duration_min" or r._field == "active_calories" or r._field == "distance_m" or r._field == "avg_hr" or r._field == "max_hr")
+            |> filter(fn: (r) => r._field == "duration_min" or r._field == "calories" or r._field == "distance_m" or r._field == "avg_hr" or r._field == "max_hr")
         """
         try:
             tables = await query_api.query(query)
@@ -465,8 +465,8 @@ class DailyReportGenerator:
             parts = [w.get("type", "Workout")]
             if "duration_min" in w:
                 parts.append(f"{w['duration_min']:.0f}min")
-            if "active_calories" in w:
-                parts.append(f"{w['active_calories']:.0f}cal")
+            if "calories" in w:
+                parts.append(f"{w['calories']:.0f}cal")
             if "distance_m" in w and w["distance_m"]:
                 km = w["distance_m"] / 1000
                 parts.append(f"{km:.1f}km")
