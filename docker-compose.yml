@@ -1,11 +1,14 @@
 # =============================================================================
-# Apple Health Backup & Analysis System - Docker Compose Stack
+# Apple Health Backup & Analysis System - Docker Compose Stack (Pi Deployment)
 # =============================================================================
 # Services:
 #   - health-ingest: REST API ingestion, transforms and writes to InfluxDB
-#   - openclaw-gateway: AI personal assistant for Telegram delivery
 #   - influxdb: Time-series database for storing health metrics
-#   - grafana: Visualization dashboards
+#
+# OpenClaw gateway is managed separately via docker-compose.openclaw.yml
+# and bridges to health-network for cross-stack communication.
+#
+# Grafana runs in the monitoring stack (port 3001).
 #
 # Usage:
 #   Start:   docker compose up -d
@@ -14,10 +17,8 @@
 #   Rebuild: docker compose build --no-cache
 #
 # Ports:
-#   - 8084:  Health Ingest REST API (http://localhost:8084)
-#   - 8087:  InfluxDB (http://localhost:8087)
-#   - 3050:  Grafana  (http://localhost:3050)
-#   - 18789: OpenClaw Gateway (http://localhost:18789)
+#   - 8084: Health Ingest REST API (http://localhost:8084)
+#   - 8087: InfluxDB (http://localhost:8087)
 # =============================================================================
 
 services:
@@ -35,10 +36,10 @@ services:
       influxdb:
         condition: service_healthy
     volumes:
-      # Resilience layer data persistence
-      - ./data/archive:/data/archive
-      - ./data/dedup:/data/dedup
-      - ./data/dlq:/data/dlq
+      # Resilience layer data persistence (NVMe for performance)
+      - /mnt/nvme/health/archive:/data/archive
+      - /mnt/nvme/health/dedup:/data/dedup
+      - /mnt/nvme/health/dlq:/data/dlq
     environment:
       # HTTP ingestion API settings
       - HTTP_ENABLED=${HTTP_ENABLED:-true}
@@ -80,48 +81,27 @@ services:
       - OPENCLAW_GATEWAY_URL=http://openclaw-gateway:18789
       - OPENCLAW_HOOKS_TOKEN=${OPENCLAW_HOOKS_TOKEN:-}
       - OPENCLAW_TELEGRAM_USER_ID=${OPENCLAW_TELEGRAM_USER_ID:-0}
+      # Bot webhook settings (Telegram commands via OpenClaw)
+      - BOT_ENABLED=${BOT_ENABLED:-false}
+      - BOT_WEBHOOK_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - BOT_RESPONSE_TIMEOUT_SECONDS=${BOT_RESPONSE_TIMEOUT_SECONDS:-15.0}
     ports:
       # HTTP ingestion API (mapped to 8084 externally to avoid conflicts)
       - "${HTTP_PORT_EXTERNAL:-8084}:${HTTP_PORT:-8080}"
     healthcheck:
       test: ["CMD", "health-check"]
       interval: 30s
-      timeout: 15s
+      timeout: 30s
       retries: 3
-      start_period: 30s
+      start_period: 60s
     restart: unless-stopped
     networks:
       - health-network
-
-  # ---------------------------------------------------------------------------
-  # OpenClaw Gateway - AI Personal Assistant
-  # ---------------------------------------------------------------------------
-  # Local-first gateway for OpenClaw AI assistant.
-  # Delivers weekly health reports via Telegram and provides
-  # conversational access to health data.
-  # Control UI available at http://localhost:18789
-  openclaw-gateway:
-    image: openclaw/openclaw:latest
-    container_name: openclaw-gateway
-    volumes:
-      - ./data/openclaw:/root/.openclaw
-      - ./skills/apple-health:/root/.openclaw/workspace/skills/apple-health:ro
-    environment:
-      - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
-      - INFLUXDB_URL=http://influxdb:8086
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
-      - INFLUXDB_ORG=${INFLUXDB_ORG:-health}
-      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-apple_health}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-    ports:
-      - "${OPENCLAW_PORT_EXTERNAL:-18789}:18789"
-    depends_on:
-      influxdb:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - health-network
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.15"
 
   # ---------------------------------------------------------------------------
   # InfluxDB - Time-Series Database
@@ -134,9 +114,9 @@ services:
     ports:
       - "8087:8086"  # Mapped to 8087 to avoid conflicts with other services
     volumes:
-      # Data persistence
-      - ./data/influxdb:/var/lib/influxdb2
-      - ./data/influxdb-config:/etc/influxdb2
+      # Data persistence on NVMe for better performance
+      - /mnt/nvme/health/influxdb:/var/lib/influxdb2
+      - /mnt/nvme/health/influxdb-config:/etc/influxdb2
     environment:
       # Initial setup configuration (only used on first run)
       - DOCKER_INFLUXDB_INIT_MODE=setup
@@ -151,44 +131,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     restart: unless-stopped
     networks:
       - health-network
-
-  # ---------------------------------------------------------------------------
-  # Grafana - Visualization Dashboards
-  # ---------------------------------------------------------------------------
-  # Pre-configured with InfluxDB datasource and health overview dashboard.
-  # Web UI available at http://localhost:3050
-  grafana:
-    image: grafana/grafana:latest
-    container_name: health-grafana
-    ports:
-      - "3050:3000"  # Mapped to 3050 to avoid conflicts (e.g., with Karakeep)
-    volumes:
-      # Data persistence
-      - ./data/grafana:/var/lib/grafana
-      # Provisioning configuration (datasources and dashboards)
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    environment:
-      # Admin credentials
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
-      # Security settings
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SECURITY_DISABLE_GRAVATAR=true
-      # Server settings (for reverse proxy / Cloudflare Tunnel)
-      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3050}
-      - GF_SERVER_SERVE_FROM_SUB_PATH=false
-      # InfluxDB token for provisioned datasource
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
-    depends_on:
-      influxdb:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - health-network
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "0.30"
 
 # =============================================================================
 # Networks
