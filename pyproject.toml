@@ -98,6 +98,8 @@ ignore = ["N815", "SIM105"]  # N815: Allow camelCase for Pydantic JSON aliases; 
 "src/health_ingest/reports/weekly.py" = ["E501"]  # Long Flux queries
 "src/health_ingest/reports/rules.py" = ["E501"]  # Rule content strings
 "src/health_ingest/reports/daily.py" = ["E501"]  # Long Flux queries
+"src/health_ingest/bot/queries.py" = ["E501"]  # Long Flux queries
+"src/health_ingest/bot/formatter.py" = ["E501"]  # Long format strings
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

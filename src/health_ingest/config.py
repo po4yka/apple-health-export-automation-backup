@@ -307,6 +307,18 @@ class TracingSettings(BaseSettings):
     service_name: str = Field(default="health-ingest", description="Service name")
 
 
+class BotSettings(BaseSettings):
+    """Telegram bot webhook settings."""
+
+    model_config = SettingsConfigDict(env_prefix="BOT_")
+
+    enabled: bool = Field(default=False, description="Enable Telegram bot webhook")
+    webhook_token: str = Field(default="", description="Bearer token for bot webhook auth")
+    response_timeout_seconds: float = Field(
+        default=15.0, description="Timeout for bot command processing"
+    )
+
+
 class Settings(BaseSettings):
     """Combined application settings."""
 
@@ -322,6 +334,7 @@ class Settings(BaseSettings):
     openclaw: OpenClawSettings = Field(default_factory=OpenClawSettings)
     insight: InsightSettings = Field(default_factory=InsightSettings)
     tracing: TracingSettings = Field(default_factory=TracingSettings)
+    bot: BotSettings = Field(default_factory=BotSettings)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -339,6 +352,7 @@ class Settings(BaseSettings):
             openclaw=OpenClawSettings(),
             insight=InsightSettings(),
             tracing=TracingSettings(),
+            bot=BotSettings(),
         )
 
 

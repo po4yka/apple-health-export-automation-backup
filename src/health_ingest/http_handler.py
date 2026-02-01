@@ -141,6 +141,16 @@ class DailyReportRequest(BaseModel):
     reference_time: datetime | None = None
 
 
+class BotWebhookPayload(BaseModel):
+    """Request payload for bot webhook."""
+
+    model_config = ConfigDict(extra="allow")
+
+    message: str
+    user_id: int
+    channel: str = "telegram"
+
+
 class ReplayResponse(BaseModel):
     """Response for replay requests."""
 
@@ -168,6 +178,8 @@ class HTTPHandler:
         status_provider: Callable[[], ServiceStatusSnapshot] | None = None,
         report_callback: Callable[[datetime | None], Awaitable[str]] | None = None,
         daily_report_callback: Callable[[str, datetime | None], Awaitable[str]] | None = None,
+        bot_dispatcher: Any | None = None,
+        bot_webhook_token: str = "",
     ) -> None:
         self._settings = settings
         self._message_callback = message_callback
@@ -176,6 +188,8 @@ class HTTPHandler:
         self._status_provider = status_provider
         self._report_callback = report_callback
         self._daily_report_callback = daily_report_callback
+        self._bot_dispatcher = bot_dispatcher
+        self._bot_webhook_token = bot_webhook_token
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
@@ -188,6 +202,15 @@ class HTTPHandler:
         if not auth_header.startswith("Bearer "):
             return False
         return auth_header[7:] == self._settings.auth_token
+
+    def _check_bot_auth(self, request: Request) -> bool:
+        """Validate Bearer token for bot webhook (separate from ingest auth)."""
+        if not self._bot_webhook_token:
+            return True  # No token configured = auth disabled
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return False
+        return auth_header[7:] == self._bot_webhook_token
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(
@@ -710,6 +733,34 @@ class HTTPHandler:
                 )
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="200").inc()
             return {"status": "generated", "report": report}
+
+        @app.post(
+            "/bot/webhook",
+            status_code=status.HTTP_202_ACCEPTED,
+            responses={
+                401: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Bot webhook for Telegram commands",
+        )
+        async def bot_webhook(
+            request: Request,
+            payload: BotWebhookPayload,
+        ):
+            """Handle POST /bot/webhook -- receive bot commands from OpenClaw."""
+            if not self._check_bot_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/webhook", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._bot_dispatcher:
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/webhook", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Bot unavailable")
+
+            asyncio.create_task(
+                self._bot_dispatcher.handle_webhook(payload.message, payload.user_id)
+            )
+
+            HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/webhook", status="202").inc()
+            return {"status": "accepted", "message": payload.message}
 
         return app
 

@@ -142,6 +142,18 @@ class HealthIngestService:
             for i in range(MAX_CONCURRENT_MESSAGES)
         ]
 
+        # Initialize bot dispatcher (if enabled)
+        bot_dispatcher = None
+        if self._settings.bot.enabled:
+            from .bot import BotDispatcher
+
+            bot_dispatcher = BotDispatcher(
+                bot_settings=self._settings.bot,
+                influxdb_settings=self._settings.influxdb,
+                openclaw_settings=self._settings.openclaw,
+            )
+            logger.info("bot_dispatcher_initialized")
+
         # Initialize and start HTTP handler (if enabled)
         if self._settings.http.enabled:
             self._http_handler = HTTPHandler(
@@ -152,6 +164,8 @@ class HealthIngestService:
                 status_provider=self._status_snapshot,
                 report_callback=self._generate_weekly_report,
                 daily_report_callback=self._generate_daily_report,
+                bot_dispatcher=bot_dispatcher,
+                bot_webhook_token=self._settings.bot.webhook_token,
             )
             await self._http_handler.start()
 
