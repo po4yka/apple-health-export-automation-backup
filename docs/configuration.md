@@ -54,6 +54,14 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 | `OPENCLAW_HOOKS_TOKEN` | - | Hooks API authentication token |
 | `OPENCLAW_TELEGRAM_USER_ID` | `0` | Target Telegram user ID |
 
+### Telegram Bot
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BOT_ENABLED` | `false` | Enable Telegram bot webhook endpoint |
+| `BOT_WEBHOOK_TOKEN` | - | Bearer token for bot webhook authentication |
+| `BOT_RESPONSE_TIMEOUT_SECONDS` | `15.0` | Timeout for bot command processing |
+
 ### Archive
 
 | Variable | Default | Description |

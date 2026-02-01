@@ -100,6 +100,7 @@ Tip: Use `openssl rand -hex 32` for tokens and `openssl rand -base64 16` for pas
 | Service | Container | Port | Description |
 |---------|-----------|------|-------------|
 | health-ingest | `health-ingest` | 8084 | REST API ingestion, transforms and writes to InfluxDB |
+| OpenClaw | `openclaw-gateway` | 18789 | AI assistant gateway for Telegram delivery |
 | InfluxDB | `health-influxdb` | 8087 | Time-series database for health metrics |
 | Grafana | `health-grafana` | 3050 | Visualization dashboards |
 
@@ -111,6 +112,7 @@ Tip: Use `openssl rand -hex 32` for tokens and `openssl rand -base64 16` for pas
 | [Data Model](docs/data-model.md) | InfluxDB schema, measurements, supported workout types |
 | [Development](docs/development.md) | Local setup, testing, linting, CLI commands |
 | [Operations](docs/operations.md) | Troubleshooting, security notes, backups, Cloudflare Tunnel |
+| [Telegram Bot](docs/telegram-bot.md) | Bot commands, BotFather setup, webhook configuration |
 | [iOS App Setup](docs/ios-app-setup.md) | Health Auto Export configuration and recommended metrics |
 
 ## License

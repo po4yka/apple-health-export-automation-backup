@@ -302,7 +302,8 @@ class TestInsightEngine:
         mock_insight_settings.ai_provider = "openai"
         self._patch_openai(
             monkeypatch,
-            '[{"category":"activity","headline":"Solid week","reasoning":"Steps up","recommendation":"Keep it up"}]',
+            '[{"category":"activity","headline":"Solid week",'
+            '"reasoning":"Steps up","recommendation":"Keep it up"}]',
         )
 
         engine = InsightEngine(
@@ -330,7 +331,8 @@ class TestInsightEngine:
         mock_insight_settings.ai_provider = "openai"
         self._patch_openai(
             monkeypatch,
-            "```json\n[{\"category\":\"sleep\",\"headline\":\"Solid sleep\",\"reasoning\":\"7.2 hours\",\"recommendation\":\"Keep routine\"}]\n```",
+            '```json\n[{"category":"sleep","headline":"Solid sleep",'
+            '"reasoning":"7.2 hours","recommendation":"Keep routine"}]\n```',
         )
 
         engine = InsightEngine(
