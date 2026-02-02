@@ -41,7 +41,7 @@ jobs:
 
       - run: uv sync --frozen --dev
 
-      - run: uv run pytest --tb=short -q
+      - run: uv run pytest --tb=short -q --cov=src/health_ingest --cov-report=term-missing
 
   docker:
     runs-on: ubuntu-latest

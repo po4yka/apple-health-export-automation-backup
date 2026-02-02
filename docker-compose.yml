@@ -37,6 +37,7 @@ services:
         condition: service_healthy
     volumes:
       # Resilience layer data persistence (NVMe for performance)
+      # Ensure host directories are owned by UID 1000 (appuser) for write access
       - /mnt/nvme/health/archive:/data/archive
       - /mnt/nvme/health/dedup:/data/dedup
       - /mnt/nvme/health/dlq:/data/dlq
@@ -83,15 +84,18 @@ services:
       - OPENCLAW_TELEGRAM_USER_ID=${OPENCLAW_TELEGRAM_USER_ID:-0}
       # Bot webhook settings (Telegram commands via OpenClaw)
       - BOT_ENABLED=${BOT_ENABLED:-false}
-      - BOT_WEBHOOK_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - BOT_WEBHOOK_TOKEN=${BOT_WEBHOOK_TOKEN:-}
       - BOT_RESPONSE_TIMEOUT_SECONDS=${BOT_RESPONSE_TIMEOUT_SECONDS:-15.0}
+      # OpenTelemetry settings
+      - OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-health-ingest}
     ports:
       # HTTP ingestion API (mapped to 8084 externally to avoid conflicts)
       - "${HTTP_PORT_EXTERNAL:-8084}:${HTTP_PORT:-8080}"
     healthcheck:
       test: ["CMD", "health-check"]
       interval: 30s
-      timeout: 30s
+      timeout: 10s
       retries: 3
       start_period: 60s
     restart: unless-stopped
@@ -107,7 +111,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 384M
+          memory: 512M
           cpus: "0.15"
 
   # ---------------------------------------------------------------------------

@@ -1,11 +1,15 @@
 """Generic transformer for unrecognized metrics."""
 
+import re
 from datetime import datetime
 
+import structlog
 from influxdb_client import Point
 
 from ..types import JSONObject
 from .base import BaseTransformer
+
+logger = structlog.get_logger(__name__)
 
 
 class GenericTransformer(BaseTransformer):
@@ -37,7 +41,18 @@ class GenericTransformer(BaseTransformer):
                     date = datetime.fromisoformat(date.replace("Z", "+00:00"))
 
                 # Normalize and sanitize metric name for tag
-                metric_type = self._sanitize_tag(self._normalize_metric_name(name))
+                metric_type = self._normalize_metric_name(name)
+
+                # Validate metric name contains only safe characters
+                if not metric_type or not self._SAFE_METRIC_RE.match(metric_type):
+                    logger.warning(
+                        "invalid_metric_name",
+                        raw_name=name[: self._MAX_METRIC_NAME_LEN],
+                        normalized=metric_type,
+                    )
+                    continue
+
+                metric_type = self._sanitize_tag(metric_type)
 
                 point = (
                     Point(self.measurement)
@@ -68,20 +83,32 @@ class GenericTransformer(BaseTransformer):
 
         return points
 
-    def _normalize_metric_name(self, name: str) -> str:
-        """Normalize metric name to snake_case."""
-        # Handle camelCase
-        import re
+    _MAX_METRIC_NAME_LEN = 200
+    _SAFE_METRIC_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 
-        # Insert underscore before uppercase letters
-        s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
-        s2 = re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1)
+    def _normalize_metric_name(self, name: str) -> str:
+        """Normalize metric name to snake_case.
+
+        Applies a length limit, converts camelCase to snake_case,
+        collapses consecutive underscores, and strips unsafe characters.
+        """
+        # Truncate to prevent abuse before any processing
+        truncated = name[: self._MAX_METRIC_NAME_LEN]
+
+        # Insert underscore before uppercase letters (camelCase -> snake_case)
+        s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", truncated)
+        s2 = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1)
 
         # Replace spaces and hyphens with underscores
         result = s2.replace(" ", "_").replace("-", "_").lower()
 
-        # Remove any double underscores
-        while "__" in result:
-            result = result.replace("__", "_")
+        # Collapse consecutive underscores in a single pass (avoids ReDoS)
+        result = re.sub(r"_+", "_", result)
 
-        return result.strip("_")
+        # Strip leading/trailing underscores
+        result = result.strip("_")
+
+        # Remove any characters outside the safe set [a-zA-Z0-9_]
+        result = re.sub(r"[^a-zA-Z0-9_]", "", result)
+
+        return result

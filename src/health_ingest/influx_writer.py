@@ -33,6 +33,12 @@ NON_RETRYABLE_EXCEPTIONS = (
 )
 
 
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Log unhandled exceptions from background tasks."""
+    if not task.cancelled() and task.exception():
+        logger.error("background_task_failed", error=str(task.exception()))
+
+
 class InfluxWriter:
     """Async InfluxDB writer with batching and retry logic."""
 
@@ -108,6 +114,7 @@ class InfluxWriter:
 
         # Start background flush task
         self._flush_task = asyncio.create_task(self._periodic_flush())
+        self._flush_task.add_done_callback(_log_task_exception)
 
         logger.info("influxdb_connected")
 

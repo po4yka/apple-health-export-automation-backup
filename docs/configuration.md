@@ -39,11 +39,14 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model for weekly reports |
 | `OPENAI_API_KEY` | - | OpenAI API key for weekly reports |
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model for weekly reports |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
 | `GROK_API_KEY` | - | Grok (xAI) API key for weekly reports |
 | `GROK_MODEL` | `grok-2-latest` | Grok (xAI) model for weekly reports |
+| `GROK_BASE_URL` | `https://api.x.ai/v1` | Grok OpenAI-compatible base URL |
 | `INSIGHT_PREFER_AI` | `true` | Prefer AI insights over rule-based |
 | `INSIGHT_MAX_INSIGHTS` | `5` | Maximum insights per report |
 | `INSIGHT_AI_TIMEOUT_SECONDS` | `30.0` | AI API timeout in seconds |
+| `INSIGHT_INCLUDE_REASONING` | `true` | Include reasoning in AI insights |
 
 ### Telegram Delivery (Optional)
 
@@ -53,6 +56,8 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 | `OPENCLAW_GATEWAY_URL` | `http://openclaw-gateway:18789` | OpenClaw gateway URL |
 | `OPENCLAW_HOOKS_TOKEN` | - | Hooks API authentication token |
 | `OPENCLAW_TELEGRAM_USER_ID` | `0` | Target Telegram user ID |
+| `OPENCLAW_MAX_RETRIES` | `3` | Maximum delivery retries |
+| `OPENCLAW_RETRY_DELAY_SECONDS` | `5.0` | Initial retry delay in seconds |
 
 ### Telegram Bot
 
@@ -92,6 +97,13 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 | `DLQ_MAX_ENTRIES` | `10000` | Maximum entries before eviction |
 | `DLQ_RETENTION_DAYS` | `30` | Delete entries older than N days |
 | `DLQ_MAX_RETRIES` | `3` | Maximum replay attempts |
+
+### Tracing (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `OTEL_SERVICE_NAME` | `health-ingest` | Service name for traces |
 
 ### DLQ Categories
 

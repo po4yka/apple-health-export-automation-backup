@@ -64,8 +64,12 @@ COPY --from=builder /app /app
 USER appuser
 
 # Health check - verifies InfluxDB connectivity
-HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD ["health-check"]
+
+# Expose HTTP API and Prometheus metrics ports
+EXPOSE 8080
+EXPOSE 9090
 
 # Run the service
 CMD ["health-ingest"]

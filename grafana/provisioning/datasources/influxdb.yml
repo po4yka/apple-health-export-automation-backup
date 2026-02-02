@@ -9,6 +9,7 @@ datasources:
       version: Flux
       organization: health
       defaultBucket: apple_health
+      # Internal Docker network — no TLS between containers
       tlsSkipVerify: true
     secureJsonData:
       token: ${INFLUXDB_TOKEN}

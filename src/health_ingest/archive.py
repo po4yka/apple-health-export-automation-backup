@@ -39,7 +39,9 @@ class RawArchiver:
             max_age_days: Delete archives older than this.
             compress_after_days: Compress archives older than this.
         """
-        self._archive_dir = Path(archive_dir)
+        self._archive_dir = Path(archive_dir).resolve()
+        if self._archive_dir.exists() and not self._archive_dir.is_dir():
+            raise ValueError(f"archive_dir is not a directory: {self._archive_dir}")
         self._rotation = rotation
         self._max_age_days = max_age_days
         self._compress_after_days = compress_after_days

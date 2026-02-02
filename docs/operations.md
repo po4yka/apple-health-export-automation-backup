@@ -50,7 +50,7 @@
 ## Security Notes
 
 - Keep `HTTP_AUTH_TOKEN` secret. Treat it like a password and rotate it if it leaks.
-- Only expose ports (8084, 8087, 3050) to trusted networks. If you need remote access, prefer a reverse proxy or Cloudflare Tunnel with authentication.
+- Only expose ports (8084, 8087, 3001) to trusted networks. If you need remote access, prefer a reverse proxy or Cloudflare Tunnel with authentication.
 - Grafana and InfluxDB passwords are stored in `.env`; keep that file out of version control.
 
 ## Backups and Restore
@@ -68,7 +68,7 @@ For a more granular approach, InfluxDB also supports native backup/restore comma
 To expose services publicly via Cloudflare:
 
 1. Add routes in [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/):
-   - **Hostname**: `health.yourdomain.com` -> `http://localhost:3050` (Grafana)
+   - **Hostname**: `health.yourdomain.com` -> `http://localhost:3001` (Grafana)
    - **Hostname**: `health-api.yourdomain.com` -> `http://localhost:8084` (REST API)
 
 2. Configure Grafana root URL in `.env`:

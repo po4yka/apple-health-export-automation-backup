@@ -56,15 +56,22 @@ Failed writes go to a SQLite-backed dead-letter queue (DLQ) for replay.
 | Module | Role |
 |---|---|
 | `main.py` | Orchestrator, signal handling, asyncio loop |
-| `http_handler.py` | FastAPI routes: `/ingest`, `/health`, `/ready`, `/dlq`, `/reports/weekly` |
-| `influx_writer.py` | Batched async InfluxDB writer with retry + circuit breaker |
+| `http_handler.py` | FastAPI routes: `/ingest`, `/health`, `/ready`, `/dlq`, `/reports/weekly`, `/bot/webhook` |
 | `config.py` | Pydantic-settings, nested classes, env prefix per subsystem |
+| `influx_writer.py` | Batched async InfluxDB writer with retry + circuit breaker |
+| `circuit_breaker.py` | CLOSED / OPEN / HALF_OPEN state machine |
 | `transformers/` | Priority-ordered registry; subclass `BaseTransformer` |
-| `reports/` | Weekly report: Flux queries, AI insights, Telegram delivery |
+| `reports/` | Weekly/daily reports: Flux queries, AI insights, Telegram delivery |
+| `bot/` | Telegram bot: command dispatcher, query service, formatter |
+| `query.py` | CLI query builder for ad-hoc InfluxDB queries |
+| `cli.py` | CLI entry points (health-query, health-check, health-archive, etc.) |
 | `dedup.py` | LRU cache + SQLite for idempotent ingestion |
 | `dlq.py` | Dead-letter queue with categorised failures |
 | `archive.py` | Raw payload archiving with rotation/compression |
-| `circuit_breaker.py` | CLOSED / OPEN / HALF_OPEN state machine |
+| `schema_validation.py` | Payload validation before transformation |
+| `duckdb_analytics.py` | DuckDB-based archive analytics and Parquet export |
+| `metrics.py` | Prometheus metrics instrumentation |
+| `tracing.py` | OpenTelemetry tracing setup |
 
 ### Payload formats
 

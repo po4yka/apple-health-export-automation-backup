@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import traceback
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -95,6 +96,15 @@ class DeadLetterQueue:
         conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
+    @staticmethod
+    def _decompress_payload(data: bytes) -> bytes:
+        """Decompress a stored payload, falling back to raw bytes for old entries."""
+        try:
+            return zlib.decompress(data)
+        except zlib.error:
+            # Pre-compression entry stored as raw bytes -- return as-is
+            return data
+
     async def _ensure_initialized(self) -> None:
         """Ensure database is initialized."""
         if self._initialized:
@@ -161,6 +171,7 @@ class DeadLetterQueue:
         entry_id = uuid.uuid4().hex[:16]
         now = datetime.now()
         error_tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        compressed_payload = zlib.compress(payload)
 
         loop = asyncio.get_running_loop()
 
@@ -177,7 +188,7 @@ class DeadLetterQueue:
                         entry_id,
                         category.value,
                         topic,
-                        payload,
+                        compressed_payload,
                         str(error),
                         error_tb,
                         archive_id,
@@ -235,7 +246,7 @@ class DeadLetterQueue:
                     id=row[0],
                     category=DLQCategory(row[1]),
                     topic=row[2],
-                    payload=row[3],
+                    payload=DeadLetterQueue._decompress_payload(row[3]),
                     error_message=row[4],
                     error_traceback=row[5],
                     archive_id=row[6],
@@ -301,7 +312,7 @@ class DeadLetterQueue:
                             id=row[0],
                             category=DLQCategory(row[1]),
                             topic=row[2],
-                            payload=row[3],
+                            payload=DeadLetterQueue._decompress_payload(row[3]),
                             error_message=row[4],
                             error_traceback=row[5],
                             archive_id=row[6],
