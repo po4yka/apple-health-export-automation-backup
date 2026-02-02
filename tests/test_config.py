@@ -48,3 +48,18 @@ def test_http_settings_validation():
 
     with pytest.raises(ValueError, match="Max request size must be at least 1KB"):
         HTTPSettings(max_request_size=100)
+
+
+def test_http_warns_when_auth_token_empty():
+    """Warning emitted when HTTP is enabled but auth_token is empty."""
+    with pytest.warns(UserWarning, match="HTTP_AUTH_TOKEN is empty"):
+        HTTPSettings(_env_file=None, enabled=True, auth_token="")
+
+
+def test_http_no_warning_when_auth_token_set():
+    """No warning when auth_token is set."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        HTTPSettings(_env_file=None, enabled=True, auth_token="secret")

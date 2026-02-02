@@ -3,7 +3,7 @@
 import threading
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Valid log levels
@@ -21,6 +21,9 @@ class InfluxDBSettings(BaseSettings):
     bucket: str = Field(default="apple_health", description="InfluxDB bucket")
     batch_size: int = Field(default=1000, description="Batch size for writes")
     flush_interval_ms: int = Field(default=30000, description="Flush interval in milliseconds")
+    write_timeout_seconds: float = Field(
+        default=10.0, description="Timeout for individual write ops"
+    )
 
     @field_validator("token")
     @classmethod
@@ -213,6 +216,9 @@ class InsightSettings(BaseSettings):
     max_insights: int = Field(default=5, description="Maximum insights to include in report")
     include_reasoning: bool = Field(default=True, description="Include reasoning in insights")
     ai_timeout_seconds: float = Field(default=30.0, description="AI API timeout in seconds")
+    report_timeout_seconds: float = Field(
+        default=120.0, description="Timeout for report generation"
+    )
 
     @field_validator("max_insights")
     @classmethod
@@ -237,6 +243,10 @@ class HTTPSettings(BaseSettings):
     max_request_size: int = Field(
         default=10_485_760, description="Maximum request body size in bytes (10MB)"
     )
+    rate_limit_per_minute: int = Field(
+        default=120, description="Max requests/min to /ingest (0 to disable)"
+    )
+    rate_limit_burst: int = Field(default=20, description="Max burst size for rate limiting")
 
     @field_validator("port")
     @classmethod
@@ -255,6 +265,18 @@ class HTTPSettings(BaseSettings):
         if v > 104_857_600:
             raise ValueError(f"Max request size too large (max 100MB), got {v}")
         return v
+
+    @model_validator(mode="after")
+    def warn_if_no_auth_token(self) -> "HTTPSettings":
+        if self.enabled and not self.auth_token:
+            import warnings
+
+            warnings.warn(
+                "HTTP_AUTH_TOKEN is empty -- /ingest endpoint is unauthenticated. "
+                "Set HTTP_AUTH_TOKEN for production deployments.",
+                stacklevel=1,
+            )
+        return self
 
 
 class AppSettings(BaseSettings):
@@ -315,7 +337,11 @@ class BotSettings(BaseSettings):
     enabled: bool = Field(default=False, description="Enable Telegram bot webhook")
     webhook_token: str = Field(default="", description="Bearer token for bot webhook auth")
     response_timeout_seconds: float = Field(
-        default=15.0, description="Timeout for bot command processing"
+        default=45.0, description="Timeout for bot command processing"
+    )
+    insights_enabled: bool = Field(default=True, description="Enable AI insights for bot commands")
+    insight_timeout_seconds: float = Field(
+        default=20.0, description="Timeout for AI insight generation"
     )
 
 

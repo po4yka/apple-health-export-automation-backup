@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
+import time
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
 from typing import Any, Literal, cast
@@ -172,6 +174,41 @@ class ReplayResponse(BaseModel):
     failure: int | None = None
 
 
+class TokenBucketRateLimiter:
+    """Token bucket rate limiter for request throttling."""
+
+    def __init__(self, rate_per_minute: int, burst: int) -> None:
+        self._rate = rate_per_minute / 60.0
+        self._burst = float(burst)
+        self._tokens = float(burst)
+        self._last_refill = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> bool:
+        async with self._lock:
+            now = time.monotonic()
+            self._tokens = min(self._burst, self._tokens + (now - self._last_refill) * self._rate)
+            self._last_refill = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
+
+
+def _sanitize_validation_errors(errors: list[dict[str, object]]) -> list[dict[str, str]]:
+    """Strip internal field details from validation errors for client responses."""
+    sanitized = []
+    for err in errors:
+        loc_parts = [str(part) for part in err.get("loc", [])]
+        sanitized.append(
+            {
+                "field": ".".join(loc_parts) if loc_parts else "unknown",
+                "message": "invalid value",
+            }
+        )
+    return sanitized
+
+
 class HTTPHandler:
     """Handles HTTP ingestion endpoint for health data.
 
@@ -205,6 +242,12 @@ class HTTPHandler:
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
+        self._rate_limiter: TokenBucketRateLimiter | None = None
+        if settings.rate_limit_per_minute > 0:
+            self._rate_limiter = TokenBucketRateLimiter(
+                rate_per_minute=settings.rate_limit_per_minute,
+                burst=settings.rate_limit_burst,
+            )
 
     def _check_auth(self, request: Request) -> bool:
         """Validate Bearer token from Authorization header."""
@@ -213,7 +256,7 @@ class HTTPHandler:
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return False
-        return auth_header[7:] == self._settings.auth_token
+        return hmac.compare_digest(auth_header[7:], self._settings.auth_token)
 
     def _check_bot_auth(self, request: Request) -> bool:
         """Validate Bearer token for bot webhook (separate from ingest auth)."""
@@ -222,7 +265,7 @@ class HTTPHandler:
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return False
-        return auth_header[7:] == self._bot_webhook_token
+        return hmac.compare_digest(auth_header[7:], self._bot_webhook_token)
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(
@@ -286,6 +329,13 @@ class HTTPHandler:
                 if not self._check_auth(request):
                     HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="401").inc()
                     return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+
+                if self._rate_limiter and not await self._rate_limiter.acquire():
+                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="429").inc()
+                    return error_response(
+                        status.HTTP_429_TOO_MANY_REQUESTS,
+                        "Rate limit exceeded",
+                    )
 
                 content_length = request.headers.get("content-length")
                 if content_length and int(content_length) > self._settings.max_request_size:
@@ -355,11 +405,16 @@ class HTTPHandler:
                 try:
                     HealthIngestPayload.model_validate(payload)
                 except ValidationError as exc:
+                    logger.warning(
+                        "http_payload_validation_error",
+                        errors=exc.errors(),
+                        archive_id=archive_id,
+                    )
                     HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="422").inc()
                     return error_response(
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
                         "Payload validation failed",
-                        details=exc.errors(),
+                        details=_sanitize_validation_errors(exc.errors()),
                     )
 
                 if archive_id:
@@ -439,7 +494,10 @@ class HTTPHandler:
                 readiness_status = "ok"
             if readiness_status != "ok":
                 HTTP_REQUESTS_TOTAL.labels(method="GET", path="/ready", status="503").inc()
-                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Not ready")
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": readiness_status, "components": components},
+                )
             HTTP_REQUESTS_TOTAL.labels(method="GET", path="/ready", status="200").inc()
             return ReadyResponse(status=readiness_status, components=components)
 
@@ -702,6 +760,12 @@ class HTTPHandler:
                 )
             try:
                 report = await self._report_callback(payload.end_date)
+            except TimeoutError:
+                logger.error("weekly_report_timeout")
+                HTTP_REQUESTS_TOTAL.labels(
+                    method="POST", path="/reports/weekly", status="504"
+                ).inc()
+                return error_response(504, "Report generation timed out")
             except Exception as exc:
                 logger.error("weekly_report_failed", error=str(exc))
                 HTTP_REQUESTS_TOTAL.labels(
@@ -737,6 +801,10 @@ class HTTPHandler:
                 )
             try:
                 report = await self._daily_report_callback(payload.mode, payload.reference_time)
+            except TimeoutError:
+                logger.error("daily_report_timeout")
+                HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="504").inc()
+                return error_response(504, "Report generation timed out")
             except Exception as exc:
                 logger.error("daily_report_failed", error=str(exc))
                 HTTP_REQUESTS_TOTAL.labels(method="POST", path="/reports/daily", status="500").inc()

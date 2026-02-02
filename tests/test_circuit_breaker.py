@@ -1,5 +1,6 @@
 """Tests for the circuit breaker."""
 
+import threading
 import time
 
 from health_ingest.circuit_breaker import CircuitBreaker, CircuitState
@@ -40,3 +41,30 @@ def test_circuit_breaker_half_open_after_timeout(monkeypatch):
     breaker.record_success()
     assert breaker.is_closed
     assert breaker.get_stats()["failure_count"] == 0
+
+
+def test_circuit_breaker_thread_safety():
+    """Circuit breaker handles concurrent access without corruption."""
+    breaker = CircuitBreaker("influx", failure_threshold=3, recovery_timeout=60)
+    errors: list[Exception] = []
+
+    def hammer():
+        try:
+            for _ in range(200):
+                breaker.record_failure()
+                breaker.state  # noqa: B018
+                breaker.get_stats()
+                breaker.record_success()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"Thread-safety errors: {errors}"
+    # After all threads finish, state should be consistent
+    stats = breaker.get_stats()
+    assert stats["state"] in ("closed", "open", "half_open")

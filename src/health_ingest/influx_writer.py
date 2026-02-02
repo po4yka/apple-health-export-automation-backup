@@ -1,7 +1,7 @@
 """InfluxDB writer with async batch writes and retry logic."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 
 import structlog
@@ -36,13 +36,19 @@ NON_RETRYABLE_EXCEPTIONS = (
 class InfluxWriter:
     """Async InfluxDB writer with batching and retry logic."""
 
-    def __init__(self, settings: InfluxDBSettings) -> None:
+    def __init__(
+        self,
+        settings: InfluxDBSettings,
+        on_drop: Callable[[list[Point], str], Awaitable[None]] | None = None,
+    ) -> None:
         """Initialize InfluxDB writer.
 
         Args:
             settings: InfluxDB connection settings.
+            on_drop: Optional callback invoked when points are permanently dropped.
         """
         self._settings = settings
+        self._on_drop = on_drop
         self._client: InfluxDBClientAsync | None = None
         self._write_api: WriteApiAsync | None = None
         self._buffer: list[Point] = []
@@ -107,8 +113,7 @@ class InfluxWriter:
 
     async def disconnect(self) -> None:
         """Disconnect from InfluxDB, flushing any remaining data."""
-        self._running = False
-
+        # 1. Cancel periodic flush (stop scheduled flushes)
         if self._flush_task:
             self._flush_task.cancel()
             try:
@@ -116,8 +121,11 @@ class InfluxWriter:
             except asyncio.CancelledError:
                 pass
 
-        # Final flush
+        # 2. Final flush while still "running" so _periodic_flush guard doesn't interfere
         await self._flush()
+
+        # 3. Now mark stopped
+        self._running = False
 
         if self._client:
             await self._client.close()
@@ -182,7 +190,10 @@ class InfluxWriter:
         for attempt in range(self._max_retries):
             try:
                 with INFLUX_WRITE_DURATION.time():
-                    await self._write_batch(points_to_write)
+                    await asyncio.wait_for(
+                        self._write_batch(points_to_write),
+                        timeout=self._settings.write_timeout_seconds,
+                    )
                 self._circuit_breaker.record_success()
                 INFLUX_WRITES.labels(status="success").inc()
                 INFLUX_POINTS_WRITTEN.inc(len(points_to_write))
@@ -199,6 +210,7 @@ class InfluxWriter:
                 self._dropped_points += len(points_to_write)
                 INFLUX_WRITES.labels(status="non_retryable").inc()
                 INFLUX_POINTS_DROPPED.labels(reason="non_retryable").inc(len(points_to_write))
+                await self._notify_drop(points_to_write, str(e))
                 return
             except ApiException as e:
                 # Check for auth errors (401, 403) - don't retry
@@ -212,6 +224,7 @@ class InfluxWriter:
                     self._dropped_points += len(points_to_write)
                     INFLUX_WRITES.labels(status="auth_error").inc()
                     INFLUX_POINTS_DROPPED.labels(reason="auth_error").inc(len(points_to_write))
+                    await self._notify_drop(points_to_write, str(e))
                     return
                 # Other API errors - retry
                 self._circuit_breaker.record_failure()
@@ -268,6 +281,14 @@ class InfluxWriter:
                 combined = points_to_write + self._buffer
                 self._buffer = combined[-MAX_BUFFER_SIZE:]
                 INFLUX_BUFFER_SIZE.set(len(self._buffer))
+
+    async def _notify_drop(self, points: list[Point], reason: str) -> None:
+        """Invoke the on_drop callback if configured."""
+        if self._on_drop:
+            try:
+                await self._on_drop(points, reason)
+            except Exception as cb_err:
+                logger.error("on_drop_callback_error", error=str(cb_err))
 
     async def _write_batch(self, points: list[Point]) -> None:
         """Write a batch of points to InfluxDB.

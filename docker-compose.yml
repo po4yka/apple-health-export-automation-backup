@@ -95,6 +95,13 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    cap_drop:
+      - ALL
     networks:
       - health-network
     deploy:
@@ -112,7 +119,7 @@ services:
     image: influxdb:2.7
     container_name: health-influxdb
     ports:
-      - "8087:8086"  # Mapped to 8087 to avoid conflicts with other services
+      - "127.0.0.1:8087:8086"  # Mapped to 8087 to avoid conflicts with other services
     volumes:
       # Data persistence on NVMe for better performance
       - /mnt/nvme/health/influxdb:/var/lib/influxdb2
@@ -133,6 +140,12 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     networks:
       - health-network
     deploy:

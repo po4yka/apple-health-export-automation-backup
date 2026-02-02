@@ -84,6 +84,8 @@ class HealthIngestService:
         """Start the ingestion service."""
         setup_tracing(self._settings.tracing)
         logger.info("service_starting", version="0.1.0")
+        if self._settings.http.enabled and not self._settings.http.auth_token:
+            logger.warning("auth_token_not_set", msg="HTTP_AUTH_TOKEN is empty")
         SERVICE_INFO.info({"version": "0.1.0", "python": "3.13"})
 
         # Initialize transformer registry
@@ -132,7 +134,10 @@ class HealthIngestService:
             logger.info("dlq_initialized", path=self._settings.dlq.db_path)
 
         # Initialize and connect InfluxDB writer
-        self._influx_writer = InfluxWriter(self._settings.influxdb)
+        self._influx_writer = InfluxWriter(
+            self._settings.influxdb,
+            on_drop=self._handle_dropped_points if self._dlq else None,
+        )
         await self._influx_writer.connect()
 
         # Initialize message queue and workers for backpressure
@@ -151,6 +156,10 @@ class HealthIngestService:
                 bot_settings=self._settings.bot,
                 influxdb_settings=self._settings.influxdb,
                 openclaw_settings=self._settings.openclaw,
+                anthropic_settings=self._settings.anthropic,
+                openai_settings=self._settings.openai,
+                grok_settings=self._settings.grok,
+                insight_settings=self._settings.insight,
             )
             logger.info("bot_dispatcher_initialized")
 
@@ -261,6 +270,11 @@ class HealthIngestService:
         else:
             components["dlq"] = "disabled"
 
+        if not influx_ready:
+            cb_state = components.get("influxdb", {})
+            if isinstance(cb_state, dict) and cb_state.get("circuit_state") == "open":
+                components["circuit_breaker"] = {"state": "open", "detail": "writes are failing"}
+
         status = "ok" if influx_ready and queue_ready else "degraded"
         return {"status": status, "components": components}
 
@@ -276,7 +290,10 @@ class HealthIngestService:
         )
         await generator.connect()
         try:
-            return await generator.generate_report(end_date=end_date)
+            return await asyncio.wait_for(
+                generator.generate_report(end_date=end_date),
+                timeout=self._settings.insight.report_timeout_seconds,
+            )
         finally:
             await generator.disconnect()
 
@@ -295,9 +312,25 @@ class HealthIngestService:
         )
         await generator.connect()
         try:
-            return await generator.generate_summary(SummaryMode(mode), reference_time)
+            return await asyncio.wait_for(
+                generator.generate_summary(SummaryMode(mode), reference_time),
+                timeout=self._settings.insight.report_timeout_seconds,
+            )
         finally:
             await generator.disconnect()
+
+    async def _handle_dropped_points(self, points: list, reason: str) -> None:
+        """Route permanently dropped InfluxDB points to the DLQ."""
+        if not self._dlq:
+            return
+        line_data = "\n".join(p.to_line_protocol() for p in points)
+        await self._dlq.enqueue(
+            category=DLQCategory.WRITE_ERROR,
+            topic="influxdb/dropped",
+            payload=line_data.encode("utf-8"),
+            error=RuntimeError(reason),
+        )
+        logger.warning("points_routed_to_dlq", count=len(points), reason=reason)
 
     async def _enqueue_message(
         self,

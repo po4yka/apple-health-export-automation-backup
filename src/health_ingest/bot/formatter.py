@@ -239,3 +239,12 @@ def format_error(message: str) -> str:
 def format_no_data(command: str) -> str:
     """Format a friendly no-data message."""
     return f"📭 No {command} data found. Data may not have been recorded yet."
+
+
+def append_insights(formatted_text: str, insights: list[str]) -> str:
+    """Append AI insights section to formatted response."""
+    if not insights:
+        return formatted_text
+    bullets = "\n".join(f"  - {insight}" for insight in insights)
+    section = f"\n\n*Insights:*\n{bullets}\n"
+    return _truncate(formatted_text + section)

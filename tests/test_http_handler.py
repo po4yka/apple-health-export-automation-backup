@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -14,6 +14,8 @@ from health_ingest.http_handler import HTTPHandler
 def _make_settings(
     auth_token: str = "test-token",
     max_request_size: int = 10_485_760,
+    rate_limit_per_minute: int = 0,
+    rate_limit_burst: int = 20,
 ) -> HTTPSettings:
     """Create HTTPSettings isolated from env vars."""
     return HTTPSettings(
@@ -23,6 +25,8 @@ def _make_settings(
         port=8080,
         auth_token=auth_token,
         max_request_size=max_request_size,
+        rate_limit_per_minute=rate_limit_per_minute,
+        rate_limit_burst=rate_limit_burst,
     )
 
 
@@ -32,13 +36,22 @@ def _make_handler(
     message_callback: AsyncMock | None = None,
     status_provider: Callable[[], dict[str, object]] | None = None,
     report_callback: AsyncMock | None = None,
+    daily_report_callback: AsyncMock | None = None,
+    rate_limit_per_minute: int = 0,
+    rate_limit_burst: int = 20,
 ) -> HTTPHandler:
     """Create an HTTPHandler with test settings."""
     return HTTPHandler(
-        settings=_make_settings(auth_token=auth_token, max_request_size=max_request_size),
+        settings=_make_settings(
+            auth_token=auth_token,
+            max_request_size=max_request_size,
+            rate_limit_per_minute=rate_limit_per_minute,
+            rate_limit_burst=rate_limit_burst,
+        ),
         message_callback=message_callback or AsyncMock(),
         status_provider=status_provider,
         report_callback=report_callback,
+        daily_report_callback=daily_report_callback,
     )
 
 
@@ -233,6 +246,27 @@ class TestHTTPStatusEndpoints:
         assert resp.status_code == 503
 
     @pytest.mark.asyncio
+    async def test_ready_503_includes_components(self):
+        """503 response includes status and components detail."""
+        handler = _make_handler(
+            status_provider=lambda: {
+                "status": "degraded",
+                "components": {
+                    "influxdb": {"connected": False, "circuit_state": "open"},
+                    "circuit_breaker": {"state": "open", "detail": "writes are failing"},
+                },
+            }
+        )
+        async with await _client_for(handler) as client:
+            resp = await client.get("/ready")
+
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "degraded"
+        assert "components" in body
+        assert body["components"]["circuit_breaker"]["state"] == "open"
+
+    @pytest.mark.asyncio
     async def test_info_returns_version(self):
         handler = _make_handler()
         async with await _client_for(handler) as client:
@@ -349,3 +383,170 @@ class TestHTTPSettings:
     def test_max_request_size_too_small(self):
         with pytest.raises(ValueError, match="at least 1KB"):
             HTTPSettings(_env_file=None, max_request_size=100)
+
+
+class TestTimingSafeAuth:
+    """Tests that auth token comparison uses timing-safe hmac.compare_digest."""
+
+    @pytest.mark.asyncio
+    async def test_check_auth_uses_hmac_compare_digest(self):
+        """Auth check uses hmac.compare_digest instead of == for timing safety."""
+        handler = _make_handler(auth_token="secret-token")
+        async with await _client_for(handler) as client:
+            with patch("health_ingest.http_handler.hmac.compare_digest", return_value=True) as mock:
+                resp = await client.post(
+                    "/ingest",
+                    json={"data": []},
+                    headers={"Authorization": "Bearer secret-token"},
+                )
+
+        assert resp.status_code == 202
+        mock.assert_called_once_with("secret-token", "secret-token")
+
+
+class TestValidationErrorMasking:
+    """Tests that validation errors are sanitized before returning to clients."""
+
+    async def test_validation_error_details_are_sanitized(self):
+        """Response details contain only 'field' and 'message' keys, no raw error info."""
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            # Send payload with invalid data type to trigger ValidationError
+            resp = await client.post(
+                "/ingest",
+                json={"data": {"metrics": "not-a-list"}},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert resp.status_code == 422
+        body = resp.json()
+        assert body["error"] == "Payload validation failed"
+        assert "details" in body
+        for detail in body["details"]:
+            assert set(detail.keys()) == {"field", "message"}
+            assert detail["message"] == "invalid value"
+
+
+class TestRateLimiting:
+    """Tests for token bucket rate limiting on /ingest."""
+
+    async def test_burst_allowed(self):
+        """Burst requests within limit are accepted."""
+        handler = _make_handler(rate_limit_per_minute=60, rate_limit_burst=3)
+        async with await _client_for(handler) as client:
+            for _ in range(3):
+                resp = await client.post(
+                    "/ingest",
+                    json={"data": []},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+                assert resp.status_code == 202
+
+    async def test_excess_rejected_with_429(self):
+        """Requests exceeding burst are rejected with 429."""
+        handler = _make_handler(rate_limit_per_minute=60, rate_limit_burst=2)
+        async with await _client_for(handler) as client:
+            # Exhaust the burst
+            for _ in range(2):
+                await client.post(
+                    "/ingest",
+                    json={"data": []},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+            # Next request should be rate limited
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
+            assert resp.status_code == 429
+            assert resp.json()["error"] == "Rate limit exceeded"
+
+    async def test_rate_limit_disabled_when_zero(self):
+        """Rate limiting is disabled when rate_limit_per_minute=0."""
+        handler = _make_handler(rate_limit_per_minute=0)
+        async with await _client_for(handler) as client:
+            for _ in range(5):
+                resp = await client.post(
+                    "/ingest",
+                    json={"data": []},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+                assert resp.status_code == 202
+
+    async def test_token_refill_over_time(self, monkeypatch):
+        """Tokens refill over time allowing new requests."""
+        import health_ingest.http_handler as http_mod
+
+        current_time = 0.0
+        original_monotonic = http_mod.time.monotonic
+
+        def fake_monotonic():
+            return current_time
+
+        monkeypatch.setattr(http_mod.time, "monotonic", fake_monotonic)
+
+        handler = _make_handler(rate_limit_per_minute=60, rate_limit_burst=1)
+        async with await _client_for(handler) as client:
+            # First request uses the burst token
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
+            assert resp.status_code == 202
+
+            # Immediately: should be rate limited
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
+            assert resp.status_code == 429
+
+            # Advance time by 1 second (60/min = 1/sec)
+            current_time = 1.0
+            resp = await client.post(
+                "/ingest",
+                json={"data": []},
+                headers={"Authorization": "Bearer test-token"},
+            )
+            assert resp.status_code == 202
+
+        monkeypatch.setattr(http_mod.time, "monotonic", original_monotonic)
+
+
+class TestReportTimeout:
+    """Tests that report endpoints return 504 on timeout."""
+
+    async def test_weekly_report_timeout_returns_504(self):
+        """Weekly report timeout returns 504."""
+
+        async def slow_report(_end_date):
+            raise TimeoutError("timed out")
+
+        handler = _make_handler(report_callback=AsyncMock(side_effect=slow_report))
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/reports/weekly",
+                json={},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code == 504
+        assert resp.json()["error"] == "Report generation timed out"
+
+    async def test_daily_report_timeout_returns_504(self):
+        """Daily report timeout returns 504."""
+
+        async def slow_report(_mode, _ref_time):
+            raise TimeoutError("timed out")
+
+        handler = _make_handler(daily_report_callback=AsyncMock(side_effect=slow_report))
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/reports/daily",
+                json={"mode": "morning"},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code == 504
+        assert resp.json()["error"] == "Report generation timed out"

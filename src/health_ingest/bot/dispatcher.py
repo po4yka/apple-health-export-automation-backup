@@ -6,9 +6,18 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from ..config import BotSettings, InfluxDBSettings, OpenClawSettings
+from ..config import (
+    AnthropicSettings,
+    BotSettings,
+    GrokSettings,
+    InfluxDBSettings,
+    InsightSettings,
+    OpenAISettings,
+    OpenClawSettings,
+)
 from . import commands as cmd
 from . import formatter as fmt
+from .insights import BotInsightEngine
 from .queries import BotQueryService
 
 logger = structlog.get_logger(__name__)
@@ -22,10 +31,22 @@ class BotDispatcher:
         bot_settings: BotSettings,
         influxdb_settings: InfluxDBSettings,
         openclaw_settings: OpenClawSettings,
+        anthropic_settings: AnthropicSettings | None = None,
+        openai_settings: OpenAISettings | None = None,
+        grok_settings: GrokSettings | None = None,
+        insight_settings: InsightSettings | None = None,
     ) -> None:
         self._bot_settings = bot_settings
         self._openclaw_settings = openclaw_settings
         self._query_service = BotQueryService(influxdb_settings)
+        self._insight_engine: BotInsightEngine | None = None
+        if bot_settings.insights_enabled and insight_settings:
+            self._insight_engine = BotInsightEngine(
+                anthropic_settings=anthropic_settings or AnthropicSettings(),
+                openai_settings=openai_settings or OpenAISettings(),
+                grok_settings=grok_settings or GrokSettings(),
+                insight_settings=insight_settings,
+            )
 
     async def handle_webhook(self, message_text: str, user_id: int) -> dict:
         """Handle an incoming webhook message.
@@ -73,54 +94,69 @@ class BotDispatcher:
                 data = await self._query_service.fetch_snapshot()
                 if not data.steps and data.resting_hr is None and data.weight_kg is None:
                     return fmt.format_no_data("snapshot")
-                return fmt.format_snapshot(data)
+                formatted = fmt.format_snapshot(data)
 
             case cmd.BotCommand.HEART:
                 data = await self._query_service.fetch_heart()
                 if data.resting_hr is None and data.hrv_ms is None:
                     return fmt.format_no_data("heart")
-                return fmt.format_heart(data)
+                formatted = fmt.format_heart(data)
 
             case cmd.BotCommand.SLEEP:
                 data = await self._query_service.fetch_sleep()
                 if data.duration_min is None:
                     return fmt.format_no_data("sleep")
-                return fmt.format_sleep(data)
+                formatted = fmt.format_sleep(data)
 
             case cmd.BotCommand.WEIGHT:
                 data = await self._query_service.fetch_weight()
                 if data.latest_kg is None:
                     return fmt.format_no_data("weight")
-                return fmt.format_weight(data)
+                formatted = fmt.format_weight(data)
 
             case cmd.BotCommand.TODAY:
                 data = await self._query_service.fetch_day_summary(day_offset=0)
-                return fmt.format_day_summary(data, "Today")
+                formatted = fmt.format_day_summary(data, "Today")
 
             case cmd.BotCommand.YESTERDAY:
                 data = await self._query_service.fetch_day_summary(day_offset=-1)
-                return fmt.format_day_summary(data, "Yesterday")
+                formatted = fmt.format_day_summary(data, "Yesterday")
 
             case cmd.BotCommand.WEEK:
                 data = await self._query_service.fetch_week_summary()
-                return fmt.format_day_summary(data, "This Week (7 days)")
+                formatted = fmt.format_day_summary(data, "This Week (7 days)")
 
             case cmd.BotCommand.STEPS:
                 data = await self._query_service.fetch_steps(parsed.period)
                 if not data.total and not data.daily:
                     return fmt.format_no_data("steps")
-                return fmt.format_steps(data, parsed.period)
+                formatted = fmt.format_steps(data, parsed.period)
 
             case cmd.BotCommand.WORKOUTS:
                 entries = await self._query_service.fetch_workouts(parsed.period)
-                return fmt.format_workouts(entries, parsed.period)
+                formatted = fmt.format_workouts(entries, parsed.period)
 
             case cmd.BotCommand.TRENDS:
                 data = await self._query_service.fetch_trends()
-                return fmt.format_trends(data)
+                formatted = fmt.format_trends(data)
 
             case cmd.BotCommand.HELP:
                 return fmt.format_help()
+
+        if self._insight_engine and parsed.command != cmd.BotCommand.HELP:
+            try:
+                insights = await asyncio.wait_for(
+                    self._insight_engine.generate(formatted, parsed.command.value),
+                    timeout=self._bot_settings.insight_timeout_seconds,
+                )
+                if insights:
+                    formatted = fmt.append_insights(formatted, insights)
+            except TimeoutError:
+                logger.warning("bot_insight_timeout", command=parsed.command.value)
+            except Exception as e:
+                logger.warning("bot_insight_error", command=parsed.command.value, error=str(e))
+
+        return formatted
 
     async def _send_response(self, text: str, user_id: int) -> None:
         """Send response text to user via OpenClaw."""

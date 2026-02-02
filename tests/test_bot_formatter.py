@@ -3,6 +3,7 @@
 from health_ingest.bot.commands import COMMAND_DESCRIPTIONS
 from health_ingest.bot.formatter import (
     MAX_MESSAGE_LENGTH,
+    append_insights,
     format_day_summary,
     format_error,
     format_heart,
@@ -189,6 +190,29 @@ class TestFormatNoData:
         result = format_no_data("sleep")
         assert "sleep" in result
         assert "No" in result
+
+
+class TestAppendInsights:
+    def test_append_insights_empty_list(self):
+        text = "Some data"
+        result = append_insights(text, [])
+        assert result == text
+
+    def test_append_insights_formats_correctly(self):
+        text = "Steps: 8,000"
+        insights = ["Great activity!", "Try to walk more."]
+        result = append_insights(text, insights)
+        assert "*Insights:*" in result
+        assert "  - Great activity!" in result
+        assert "  - Try to walk more." in result
+        assert result.startswith("Steps: 8,000")
+
+    def test_append_insights_truncates(self):
+        text = "x" * (MAX_MESSAGE_LENGTH - 50)
+        insights = ["A" * 200]
+        result = append_insights(text, insights)
+        assert len(result) <= MAX_MESSAGE_LENGTH
+        assert "truncated" in result
 
 
 class TestTruncation:

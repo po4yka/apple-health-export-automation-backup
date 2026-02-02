@@ -5,19 +5,29 @@ from unittest.mock import AsyncMock, patch
 
 from health_ingest.bot.dispatcher import BotDispatcher
 from health_ingest.bot.queries import SnapshotData
-from health_ingest.config import BotSettings, InfluxDBSettings, OpenClawSettings
+from health_ingest.config import (
+    AnthropicSettings,
+    BotSettings,
+    GrokSettings,
+    InfluxDBSettings,
+    InsightSettings,
+    OpenAISettings,
+    OpenClawSettings,
+)
 
 
 def _make_dispatcher(
     bot_enabled: bool = True,
     webhook_token: str = "test-bot-token",
     response_timeout: float = 5.0,
+    insights_enabled: bool = False,
 ) -> BotDispatcher:
     bot_settings = BotSettings(
         _env_file=None,
         enabled=bot_enabled,
         webhook_token=webhook_token,
         response_timeout_seconds=response_timeout,
+        insights_enabled=insights_enabled,
     )
     influxdb_settings = InfluxDBSettings(
         _env_file=None,
@@ -30,10 +40,19 @@ def _make_dispatcher(
         hooks_token="test-hooks-token",
         telegram_user_id=123456,
     )
+    kwargs = {}
+    if insights_enabled:
+        kwargs.update(
+            anthropic_settings=AnthropicSettings(_env_file=None, api_key="test-key"),
+            openai_settings=OpenAISettings(_env_file=None),
+            grok_settings=GrokSettings(_env_file=None),
+            insight_settings=InsightSettings(_env_file=None, ai_timeout_seconds=5.0),
+        )
     return BotDispatcher(
         bot_settings=bot_settings,
         influxdb_settings=influxdb_settings,
         openclaw_settings=openclaw_settings,
+        **kwargs,
     )
 
 
@@ -201,3 +220,111 @@ class TestProcessCommand:
 
         assert isinstance(result, str)
         assert "Unable to fetch" in result
+
+
+class TestDispatcherInsights:
+    """Tests for AI insight integration in dispatcher."""
+
+    async def test_dispatch_with_insights(self):
+        dispatcher = _make_dispatcher(insights_enabled=True)
+        mock_data = SnapshotData(steps=8000, active_calories=300, exercise_min=30)
+
+        with (
+            patch.object(
+                dispatcher._query_service,
+                "fetch_snapshot",
+                new_callable=AsyncMock,
+                return_value=mock_data,
+            ),
+            patch.object(
+                dispatcher._insight_engine,
+                "generate",
+                new_callable=AsyncMock,
+                return_value=["Great step count today!"],
+            ),
+        ):
+            result = await dispatcher.process_command("/health_now")
+
+        assert "8,000" in result
+        assert "Insights:" in result
+        assert "Great step count" in result
+
+    async def test_dispatch_insights_timeout_returns_data(self):
+        dispatcher = _make_dispatcher(insights_enabled=True, response_timeout=5.0)
+        mock_data = SnapshotData(steps=8000, active_calories=300, exercise_min=30)
+
+        async def slow_generate(*args, **kwargs):
+            await asyncio.sleep(10.0)
+            return ["Should not appear"]
+
+        with (
+            patch.object(
+                dispatcher._query_service,
+                "fetch_snapshot",
+                new_callable=AsyncMock,
+                return_value=mock_data,
+            ),
+            patch.object(
+                dispatcher._insight_engine,
+                "generate",
+                side_effect=slow_generate,
+            ),
+        ):
+            # Override insight timeout to be very short
+            dispatcher._bot_settings.insight_timeout_seconds = 0.01
+            result = await dispatcher.process_command("/health_now")
+
+        assert "8,000" in result
+        assert "Insights:" not in result
+
+    async def test_dispatch_insights_disabled(self):
+        dispatcher = _make_dispatcher(insights_enabled=False)
+        mock_data = SnapshotData(steps=8000, active_calories=300, exercise_min=30)
+
+        with patch.object(
+            dispatcher._query_service,
+            "fetch_snapshot",
+            new_callable=AsyncMock,
+            return_value=mock_data,
+        ):
+            result = await dispatcher.process_command("/health_now")
+
+        assert "8,000" in result
+        assert "Insights:" not in result
+        assert dispatcher._insight_engine is None
+
+    async def test_dispatch_help_no_insights(self):
+        dispatcher = _make_dispatcher(insights_enabled=True)
+
+        with patch.object(
+            dispatcher._insight_engine,
+            "generate",
+            new_callable=AsyncMock,
+        ) as mock_gen:
+            result = await dispatcher.process_command("/health_help")
+
+        assert "/health_now" in result
+        mock_gen.assert_not_awaited()
+
+    async def test_dispatch_insights_error_returns_data(self):
+        dispatcher = _make_dispatcher(insights_enabled=True)
+        mock_data = SnapshotData(steps=8000, active_calories=300, exercise_min=30)
+
+        with (
+            patch.object(
+                dispatcher._query_service,
+                "fetch_snapshot",
+                new_callable=AsyncMock,
+                return_value=mock_data,
+            ),
+            patch.object(
+                dispatcher._insight_engine,
+                "generate",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("API connection failed"),
+            ),
+        ):
+            result = await dispatcher.process_command("/health_now")
+
+        assert "8,000" in result
+        assert "Insights:" not in result
