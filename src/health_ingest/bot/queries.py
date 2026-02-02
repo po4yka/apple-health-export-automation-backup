@@ -310,7 +310,7 @@ class BotQueryService:
                 |> range(start: {sleep_start.isoformat()}, stop: {sleep_stop.isoformat()})
                 |> filter(fn: (r) => r._measurement == "sleep")
                 |> filter(fn: (r) => r._field == "duration_min" or r._field == "deep_min" or r._field == "rem_min" or r._field == "core_min" or r._field == "awake_min" or r._field == "quality_score")
-                |> last()
+                |> max()
             """
 
             tables = await query_api.query(query)
