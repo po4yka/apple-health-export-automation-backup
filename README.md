@@ -98,7 +98,7 @@ See [iOS App Setup](docs/ios-app-setup.md) for Health Auto Export configuration.
 | `health-report-send` | Generate and send weekly report via Telegram |
 | `health-daily` | Generate a daily health report to stdout |
 | `health-daily-send` | Generate and send daily report via Telegram |
-| `health-archive` | Manage raw payload archives |
+| `health-archive` | Manage raw payload archives (stats, compress, cleanup) |
 | `health-archive-replay` | Replay archived payloads by date range |
 | `health-dlq-inspect` | Inspect dead-letter queue entries |
 | `health-dlq-replay` | Replay failed messages from the DLQ |

@@ -181,8 +181,8 @@ class OpenClawDelivery:
                 error_data = response.json()
                 if "error" in error_data:
                     error_msg = f"{error_msg}: {error_data['error']}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("delivery_error_body_parse_failed", error=str(e))
 
             logger.warning(
                 "delivery_http_error",
@@ -208,5 +208,6 @@ class OpenClawDelivery:
                     timeout=5.0,
                 )
                 return response.status_code == 200
-        except Exception:
+        except Exception as e:
+            logger.debug("health_check_failed", error=str(e))
             return False

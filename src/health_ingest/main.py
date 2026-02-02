@@ -173,9 +173,13 @@ class HealthIngestService:
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
 
         # Start Prometheus metrics HTTP server (non-blocking)
-        start_metrics_server(port=self._settings.app.prometheus_port)
+        start_metrics_server(
+            port=self._settings.app.prometheus_port,
+            addr=self._settings.app.prometheus_host,
+        )
         logger.info(
             "prometheus_metrics_started",
+            host=self._settings.app.prometheus_host,
             port=self._settings.app.prometheus_port,
         )
 
@@ -375,7 +379,7 @@ class HealthIngestService:
 
         try:
             if not self._transformer_registry or not self._influx_writer:
-                logger.warning("service_not_ready")
+                logger.warning("message_dropped_service_not_ready", topic=topic)
                 return
 
             # Transform the data

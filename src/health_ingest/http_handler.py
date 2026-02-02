@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
 import uvicorn
@@ -30,8 +31,19 @@ from .types import (
     TraceContextCarrier,
 )
 
+if TYPE_CHECKING:
+    from .archive import RawArchiver
+    from .bot.dispatcher import BotDispatcher
+    from .dlq import DeadLetterQueue
+
 logger = structlog.get_logger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Log exceptions from background tasks that would otherwise be silently lost."""
+    if not task.cancelled() and task.exception():
+        logger.error("background_task_failed", error=str(task.exception()))
 
 
 class MetricPoint(BaseModel):
@@ -185,12 +197,12 @@ class HTTPHandler:
         message_callback: Callable[
             [str, JSONObject, str | None, TraceContextCarrier | None], Awaitable[None]
         ],
-        archiver: Any | None = None,
-        dlq: Any | None = None,
+        archiver: RawArchiver | None = None,
+        dlq: DeadLetterQueue | None = None,
         status_provider: Callable[[], ServiceStatusSnapshot] | None = None,
         report_callback: Callable[[datetime | None], Awaitable[str]] | None = None,
         daily_report_callback: Callable[[str, datetime | None], Awaitable[str]] | None = None,
-        bot_dispatcher: Any | None = None,
+        bot_dispatcher: BotDispatcher | None = None,
         bot_webhook_token: str = "",
     ) -> None:
         self._settings = settings
@@ -213,7 +225,7 @@ class HTTPHandler:
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return False
-        return auth_header[7:] == self._settings.auth_token
+        return hmac.compare_digest(auth_header[7:], self._settings.auth_token)
 
     def _check_bot_auth(self, request: Request) -> bool:
         """Validate Bearer token for bot webhook (separate from ingest auth)."""
@@ -222,7 +234,7 @@ class HTTPHandler:
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return False
-        return auth_header[7:] == self._bot_webhook_token
+        return hmac.compare_digest(auth_header[7:], self._bot_webhook_token)
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(
@@ -298,7 +310,8 @@ class HTTPHandler:
 
                 try:
                     raw_body = await request.body()
-                except Exception:
+                except Exception as e:
+                    logger.warning("request_body_read_failed", error=str(e))
                     HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="400").inc()
                     return error_response(
                         status.HTTP_400_BAD_REQUEST, "Failed to read request body"
@@ -350,7 +363,6 @@ class HTTPHandler:
                         status.HTTP_422_UNPROCESSABLE_ENTITY,
                         "Payload must be a JSON object",
                     )
-                payload = cast(JSONObject, payload)
 
                 try:
                     HealthIngestPayload.model_validate(payload)
@@ -361,6 +373,8 @@ class HTTPHandler:
                         "Payload validation failed",
                         details=exc.errors(),
                     )
+
+                payload = cast(JSONObject, payload)
 
                 if archive_id:
                     span.set_attribute("archive.id", archive_id)
@@ -767,9 +781,10 @@ class HTTPHandler:
                 HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/webhook", status="503").inc()
                 return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Bot unavailable")
 
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._bot_dispatcher.handle_webhook(payload.message, payload.user_id)
             )
+            task.add_done_callback(_log_task_exception)
 
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/webhook", status="202").inc()
             return {"status": "accepted", "message": payload.message}
@@ -821,6 +836,7 @@ class HTTPHandler:
         )
         self._server = uvicorn.Server(config)
         self._server_task = asyncio.create_task(self._server.serve())
+        self._server_task.add_done_callback(_log_task_exception)
         logger.info(
             "http_server_started",
             host=self._settings.host,

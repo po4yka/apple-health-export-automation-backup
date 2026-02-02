@@ -93,9 +93,15 @@ class DeduplicationCache:
         return self._is_duplicate_key(key)
 
     def _is_duplicate_key(self, key: str) -> bool:
-        """Check duplicate status by precomputed key."""
+        """Check duplicate status by precomputed key.
+
+        The lock ensures atomicity of the TTL check and cache update:
+        without it, a concurrent thread could read a stale entry between
+        the expiry check and the deletion, leading to false positives.
+        """
         now = time.time()
 
+        # Lock protects TTL check + cache mutation as an atomic unit.
         with self._lock:
             if key in self._cache:
                 ts = self._cache[key]

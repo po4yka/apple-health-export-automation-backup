@@ -267,6 +267,10 @@ class AppSettings(BaseSettings):
     default_source: str = Field(
         default="health_auto_export", description="Default source tag for metrics"
     )
+    prometheus_host: str = Field(
+        default="127.0.0.1",
+        description="Bind address for Prometheus metrics server",
+    )
     prometheus_port: int = Field(default=9090, description="Port for Prometheus metrics server")
 
     @field_validator("log_level")
@@ -320,7 +324,30 @@ class BotSettings(BaseSettings):
 
 
 class Settings(BaseSettings):
-    """Combined application settings."""
+    """Combined application settings.
+
+    Required env vars (no defaults -- will error if missing):
+        INFLUXDB_TOKEN          InfluxDB API authentication token
+
+    Optional env vars (have sensible defaults):
+        INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_BATCH_SIZE,
+        INFLUXDB_FLUSH_INTERVAL_MS, HTTP_ENABLED, HTTP_HOST, HTTP_PORT,
+        HTTP_AUTH_TOKEN, HTTP_MAX_REQUEST_SIZE, APP_LOG_LEVEL, APP_LOG_FORMAT,
+        APP_DEFAULT_SOURCE, APP_PROMETHEUS_PORT, APP_PROMETHEUS_HOST,
+        ANTHROPIC_API_KEY, ANTHROPIC_MODEL, OPENAI_API_KEY, OPENAI_MODEL,
+        OPENAI_BASE_URL, GROK_API_KEY, GROK_MODEL, GROK_BASE_URL,
+        ARCHIVE_ENABLED, ARCHIVE_DIR, ARCHIVE_ROTATION, ARCHIVE_MAX_AGE_DAYS,
+        ARCHIVE_COMPRESS_AFTER_DAYS, DEDUP_ENABLED, DEDUP_MAX_SIZE,
+        DEDUP_TTL_HOURS, DEDUP_PERSIST_ENABLED, DEDUP_PERSIST_PATH,
+        DEDUP_CHECKPOINT_INTERVAL_SEC, DLQ_ENABLED, DLQ_DB_PATH,
+        DLQ_MAX_ENTRIES, DLQ_RETENTION_DAYS, DLQ_MAX_RETRIES,
+        OPENCLAW_ENABLED, OPENCLAW_GATEWAY_URL, OPENCLAW_HOOKS_TOKEN,
+        OPENCLAW_TELEGRAM_USER_ID, OPENCLAW_MAX_RETRIES,
+        OPENCLAW_RETRY_DELAY_SECONDS, INSIGHT_PREFER_AI, INSIGHT_AI_PROVIDER,
+        INSIGHT_MAX_INSIGHTS, INSIGHT_INCLUDE_REASONING,
+        INSIGHT_AI_TIMEOUT_SECONDS, OTEL_ENABLED, OTEL_SERVICE_NAME,
+        BOT_ENABLED, BOT_WEBHOOK_TOKEN, BOT_RESPONSE_TIMEOUT_SECONDS
+    """
 
     http: HTTPSettings = Field(default_factory=HTTPSettings)
     influxdb: InfluxDBSettings = Field(default_factory=InfluxDBSettings)

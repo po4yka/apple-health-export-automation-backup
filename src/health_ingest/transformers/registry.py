@@ -1,5 +1,7 @@
 """Transformer registry for routing metrics to appropriate transformers."""
 
+import threading
+
 import structlog
 from influxdb_client import Point
 
@@ -151,14 +153,17 @@ class TransformerRegistry:
         return None
 
 
-# Global registry instance
+# Global registry instance with thread-safe initialization
 _registry: TransformerRegistry | None = None
+_registry_lock = threading.Lock()
 
 
 def get_transformer(
     metric_name: str, default_source: str = "health_auto_export"
 ) -> BaseTransformer:
     """Get a transformer for the given metric name.
+
+    Thread-safe singleton pattern using double-checked locking.
 
     Args:
         metric_name: The name/type of the metric.
@@ -169,5 +174,7 @@ def get_transformer(
     """
     global _registry
     if _registry is None:
-        _registry = TransformerRegistry(default_source)
+        with _registry_lock:
+            if _registry is None:
+                _registry = TransformerRegistry(default_source)
     return _registry.get_transformer(metric_name)
