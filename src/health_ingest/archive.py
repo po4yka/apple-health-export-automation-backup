@@ -1,9 +1,11 @@
-"""Raw MQTT payload archiver for disaster recovery."""
+"""Raw payload archiver for disaster recovery."""
 
 import asyncio
+import functools
 import gzip
 import json
 import os
+import threading
 import uuid
 from collections.abc import AsyncIterator, Callable
 from datetime import date, datetime, timedelta
@@ -16,7 +18,7 @@ logger = structlog.get_logger(__name__)
 
 
 class RawArchiver:
-    """Persists raw MQTT payloads to JSONL files before processing.
+    """Persists raw payloads to JSONL files before processing.
 
     Provides a durable record of all incoming messages for replay
     in case of processing failures or data recovery needs.
@@ -44,6 +46,7 @@ class RawArchiver:
         self._file_handles: dict[str, Any] = {}
         self._lock = asyncio.Lock()
         self._write_count = 0
+        self._write_lock = threading.Lock()
 
     def _get_file_path(self, ts: datetime) -> Path:
         """Get archive file path for a given timestamp."""
@@ -65,11 +68,11 @@ class RawArchiver:
     ) -> str:
         """Synchronously store payload to archive.
 
-        This is designed to be called from MQTT callback threads.
+        This is designed to be called from ingestion callback threads.
         Uses a simple append to minimize latency.
 
         Args:
-            topic: MQTT topic.
+            topic: Message topic.
             payload: Raw payload bytes.
             received_at: Timestamp when message was received.
 
@@ -93,9 +96,10 @@ class RawArchiver:
         }
 
         try:
-            with open(file_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            self._write_count += 1
+            with self._write_lock:
+                with open(file_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                self._write_count += 1
         except Exception as e:
             logger.error(
                 "archive_write_failed",
@@ -179,12 +183,14 @@ class RawArchiver:
 
     async def _read_jsonl(self, path: Path) -> AsyncIterator[dict[str, Any]]:
         """Stream entries from a JSONL file."""
-        async for entry in self._stream_jsonl(path, lambda p: open(p, encoding="utf-8")):
+        opener = functools.partial(open, encoding="utf-8")
+        async for entry in self._stream_jsonl(path, opener):
             yield entry
 
     async def _read_gzip(self, path: Path) -> AsyncIterator[dict[str, Any]]:
         """Stream entries from a gzipped JSONL file."""
-        async for entry in self._stream_jsonl(path, lambda p: gzip.open(p, "rt", encoding="utf-8")):
+        opener = functools.partial(gzip.open, mode="rt", encoding="utf-8")
+        async for entry in self._stream_jsonl(path, opener):
             yield entry
 
     async def _stream_jsonl(

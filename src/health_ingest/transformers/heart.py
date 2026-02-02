@@ -1,9 +1,8 @@
 """Heart rate and HRV transformers."""
 
-from typing import Any
-
 from influxdb_client import Point
 
+from ..types import JSONObject
 from .base import BaseTransformer, HealthMetric
 
 # Metrics that map to heart measurement
@@ -26,11 +25,10 @@ class HeartTransformer(BaseTransformer):
     def can_transform(self, metric_name: str) -> bool:
         """Check if this is a heart-related metric."""
         return metric_name.lower() in [k.lower() for k in HEART_METRICS] or any(
-            keyword in metric_name.lower()
-            for keyword in ["heart", "hrv", "pulse"]
+            keyword in metric_name.lower() for keyword in ["heart", "hrv", "pulse"]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform heart metric data to InfluxDB points."""
         points = []
 
@@ -45,12 +43,7 @@ class HeartTransformer(BaseTransformer):
 
                 # Determine field name
                 metric_name = metric.name.lower().replace(" ", "_")
-                field_name = "bpm"  # default
-
-                for key, field in HEART_METRICS.items():
-                    if key.lower() in metric_name:
-                        field_name = field
-                        break
+                field_name = self._lookup_field(metric_name, HEART_METRICS, default="bpm")
 
                 point = (
                     Point(self.measurement)

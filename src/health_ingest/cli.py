@@ -79,7 +79,7 @@ def archive_replay() -> None:
         health-archive-replay --start 2024-01-01 --end 2024-01-15 [--dry-run]
     """
     parser = argparse.ArgumentParser(
-        description="Replay archived MQTT messages through the processing pipeline"
+        description="Replay archived messages through the processing pipeline"
     )
     parser.add_argument(
         "--start",
@@ -303,9 +303,7 @@ def dlq_replay() -> None:
         print("Error: must specify --id, --category, or use --dry-run to show all", file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(
-        _replay_dlq(args.db_path, args.entry_id, args.category, args.limit, args.dry_run)
-    )
+    asyncio.run(_replay_dlq(args.db_path, args.entry_id, args.category, args.limit, args.dry_run))
 
 
 async def _archive_stats(archive_dir: Path) -> None:

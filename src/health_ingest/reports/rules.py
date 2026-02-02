@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import structlog
 
-from .models import InsightResult, PrivacySafeMetrics
+from .models import InsightResult, PrivacySafeDailyMetrics, PrivacySafeMetrics
 
 logger = structlog.get_logger(__name__)
 
@@ -21,12 +21,24 @@ class Rule:
     priority: int = 50  # Higher = more important
 
 
+@dataclass
+class DailyRule:
+    """A single rule for generating daily insights."""
+
+    name: str
+    category: str
+    condition: Callable[[PrivacySafeDailyMetrics], bool]
+    generate: Callable[[PrivacySafeDailyMetrics], InsightResult]
+    priority: int = 50
+
+
 class RuleEngine:
     """Evaluates predefined rules to generate insights."""
 
     def __init__(self) -> None:
         """Initialize the rule engine with predefined rules."""
         self._rules = self._build_rules()
+        self._daily_rules = self._build_daily_rules()
 
     def evaluate(self, metrics: PrivacySafeMetrics, max_insights: int = 5) -> list[InsightResult]:
         """Evaluate all rules and return matching insights.
@@ -52,6 +64,199 @@ class RuleEngine:
         # Sort by priority (descending) and return top N
         insights.sort(key=lambda x: x[0], reverse=True)
         return [insight for _, insight in insights[:max_insights]]
+
+    def evaluate_daily(
+        self, metrics: PrivacySafeDailyMetrics, max_insights: int = 3
+    ) -> list[InsightResult]:
+        """Evaluate daily rules and return matching insights.
+
+        Args:
+            metrics: Privacy-safe daily metrics to evaluate.
+            max_insights: Maximum number of insights to return.
+
+        Returns:
+            List of InsightResult objects, sorted by priority.
+        """
+        insights: list[tuple[int, InsightResult]] = []
+
+        for rule in self._daily_rules:
+            try:
+                if rule.condition(metrics):
+                    insight = rule.generate(metrics)
+                    insights.append((rule.priority, insight))
+                    logger.debug("daily_rule_matched", rule=rule.name, category=rule.category)
+            except Exception as e:
+                logger.warning("daily_rule_evaluation_failed", rule=rule.name, error=str(e))
+
+        insights.sort(key=lambda x: x[0], reverse=True)
+        return [insight for _, insight in insights[:max_insights]]
+
+    def _build_daily_rules(self) -> list[DailyRule]:
+        """Build the list of daily insight rules."""
+        rules: list[DailyRule] = []
+
+        # Sleep rules (morning)
+        rules.append(
+            DailyRule(
+                name="poor_sleep",
+                category="sleep",
+                priority=90,
+                condition=lambda m: m.sleep_duration_min is not None and m.sleep_duration_min < 360,
+                generate=lambda m: InsightResult(
+                    category="sleep",
+                    headline="Short sleep last night",
+                    reasoning=f"Only {m.sleep_duration_min / 60:.1f} hours of sleep, below the 6-hour minimum.",
+                    recommendation="Prioritize an earlier bedtime tonight and avoid screens before bed.",
+                    confidence=0.9,
+                    source="rule",
+                ),
+            )
+        )
+
+        rules.append(
+            DailyRule(
+                name="great_sleep",
+                category="sleep",
+                priority=60,
+                condition=lambda m: (
+                    m.sleep_duration_min is not None
+                    and m.sleep_duration_min >= 450
+                    and (m.sleep_quality_score or 0) >= 80
+                ),
+                generate=lambda m: InsightResult(
+                    category="sleep",
+                    headline="Excellent sleep quality",
+                    reasoning=f"Slept {m.sleep_duration_min / 60:.1f} hours with {m.sleep_quality_score:.0f}% quality.",
+                    recommendation="Great recovery night! You should feel energized for today's activities.",
+                    confidence=0.85,
+                    source="rule",
+                ),
+            )
+        )
+
+        rules.append(
+            DailyRule(
+                name="low_deep_sleep",
+                category="sleep",
+                priority=75,
+                condition=lambda m: m.sleep_deep_min is not None and m.sleep_deep_min < 45,
+                generate=lambda m: InsightResult(
+                    category="sleep",
+                    headline="Low deep sleep",
+                    reasoning=f"Only {m.sleep_deep_min:.0f} min of deep sleep (target: 45+ min).",
+                    recommendation="Avoid alcohol and heavy meals before bed to improve deep sleep.",
+                    confidence=0.8,
+                    source="rule",
+                ),
+            )
+        )
+
+        # Heart rules
+        rules.append(
+            DailyRule(
+                name="hrv_below_avg",
+                category="heart",
+                priority=80,
+                condition=lambda m: m.hrv_vs_7d_avg is not None and m.hrv_vs_7d_avg < -15,
+                generate=lambda m: InsightResult(
+                    category="heart",
+                    headline="HRV below your average",
+                    reasoning=f"HRV is {abs(m.hrv_vs_7d_avg):.0f}% below your 7-day average, suggesting fatigue.",
+                    recommendation="Consider a lighter activity day and focus on recovery.",
+                    confidence=0.8,
+                    source="rule",
+                ),
+            )
+        )
+
+        rules.append(
+            DailyRule(
+                name="hrv_above_avg",
+                category="heart",
+                priority=55,
+                condition=lambda m: m.hrv_vs_7d_avg is not None and m.hrv_vs_7d_avg > 10,
+                generate=lambda m: InsightResult(
+                    category="heart",
+                    headline="HRV above average",
+                    reasoning=f"HRV is {m.hrv_vs_7d_avg:.0f}% above your 7-day average — good recovery.",
+                    recommendation="Your body is well-recovered. A great day for a challenging workout.",
+                    confidence=0.8,
+                    source="rule",
+                ),
+            )
+        )
+
+        rules.append(
+            DailyRule(
+                name="elevated_resting_hr",
+                category="heart",
+                priority=75,
+                condition=lambda m: m.resting_hr is not None and m.resting_hr > 75,
+                generate=lambda m: InsightResult(
+                    category="heart",
+                    headline="Elevated resting heart rate",
+                    reasoning=f"Resting HR of {m.resting_hr:.0f} bpm is above typical range.",
+                    recommendation="Stay hydrated and monitor for illness or stress.",
+                    confidence=0.8,
+                    source="rule",
+                ),
+            )
+        )
+
+        # Activity rules (evening)
+        rules.append(
+            DailyRule(
+                name="steps_above_avg",
+                category="activity",
+                priority=60,
+                condition=lambda m: m.steps_vs_7d_avg is not None and m.steps_vs_7d_avg > 20,
+                generate=lambda m: InsightResult(
+                    category="activity",
+                    headline="Active day — above average",
+                    reasoning=f"Steps are {m.steps_vs_7d_avg:.0f}% above your 7-day average ({m.steps:,} total).",
+                    recommendation="Great activity level today! Make sure to stretch and hydrate.",
+                    confidence=0.85,
+                    source="rule",
+                ),
+            )
+        )
+
+        rules.append(
+            DailyRule(
+                name="steps_below_avg",
+                category="activity",
+                priority=65,
+                condition=lambda m: m.steps_vs_7d_avg is not None and m.steps_vs_7d_avg < -30,
+                generate=lambda m: InsightResult(
+                    category="activity",
+                    headline="Lower activity today",
+                    reasoning=f"Steps are {abs(m.steps_vs_7d_avg):.0f}% below your 7-day average ({m.steps:,} total).",
+                    recommendation="Try a short evening walk to add some movement before bed.",
+                    confidence=0.8,
+                    source="rule",
+                ),
+            )
+        )
+
+        # Workout rules
+        rules.append(
+            DailyRule(
+                name="workout_completed",
+                category="workouts",
+                priority=70,
+                condition=lambda m: len(m.workout_summaries) > 0,
+                generate=lambda m: InsightResult(
+                    category="workouts",
+                    headline="Workout completed",
+                    reasoning=f"Completed {len(m.workout_summaries)} workout(s) today: {', '.join(m.workout_summaries[:2])}.",
+                    recommendation="Nice work! Allow adequate recovery before your next session.",
+                    confidence=0.9,
+                    source="rule",
+                ),
+            )
+        )
+
+        return rules
 
     def _build_rules(self) -> list[Rule]:
         """Build the list of predefined rules."""

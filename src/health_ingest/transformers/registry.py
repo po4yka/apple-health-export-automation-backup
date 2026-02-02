@@ -1,14 +1,17 @@
 """Transformer registry for routing metrics to appropriate transformers."""
 
-from typing import Any
-
 import structlog
+from influxdb_client import Point
 
+from ..schema_validation import get_metric_validator
+from ..types import JSONObject
 from .activity import ActivityTransformer
+from .audio import AudioTransformer
 from .base import BaseTransformer
 from .body import BodyTransformer
 from .generic import GenericTransformer
 from .heart import HeartTransformer
+from .mobility import MobilityTransformer
 from .sleep import SleepTransformer
 from .vitals import VitalsTransformer
 from .workout import WorkoutTransformer
@@ -26,11 +29,13 @@ class TransformerRegistry:
         # Transformers in priority order (more specific first)
         self._transformers: list[BaseTransformer] = [
             HeartTransformer(default_source),
+            MobilityTransformer(default_source),
             ActivityTransformer(default_source),
             SleepTransformer(default_source),
             WorkoutTransformer(default_source),
             BodyTransformer(default_source),
             VitalsTransformer(default_source),
+            AudioTransformer(default_source),
             # Generic transformer is always last (catches everything)
             GenericTransformer(default_source),
         ]
@@ -56,7 +61,45 @@ class TransformerRegistry:
         # Should never reach here as GenericTransformer accepts everything
         return self._transformers[-1]
 
-    def transform(self, data: dict[str, Any]) -> list:
+    def _normalize_payload(self, data: JSONObject) -> list[JSONObject]:
+        """Normalize payload into a flat list of individual metric dicts.
+
+        Handles two formats from Health Auto Export:
+
+        REST API format (nested metrics, current):
+            {"data": {"metrics": [{"name": "heart_rate", "units": "bpm",
+                                   "data": [{"date": "...", "qty": 72}]}]}}
+
+        Flat list format (legacy):
+            {"data": [{"name": "heart_rate", "date": "...", "qty": 72}]}
+        """
+        inner = data.get("data")
+
+        # REST API format: {"data": {"metrics": [...]}}
+        if isinstance(inner, dict) and "metrics" in inner:
+            items: list[JSONObject] = []
+            for metric in inner["metrics"]:
+                if not isinstance(metric, dict):
+                    continue
+                name = metric.get("name", "")
+                units = metric.get("units", "")
+                for point in metric.get("data", []):
+                    if isinstance(point, dict):
+                        item = {**point, "name": name}
+                        if units:
+                            item.setdefault("units", units)
+                        items.append(item)
+            return items
+
+        # Flat list format (legacy): {"data": [...]}
+        if isinstance(inner, list):
+            base = {k: v for k, v in data.items() if k != "data"}
+            return [{**base, **item} for item in inner if isinstance(item, dict)]
+
+        # Single metric (no wrapping)
+        return [data]
+
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform metric data using the appropriate transformer.
 
         Args:
@@ -65,17 +108,34 @@ class TransformerRegistry:
         Returns:
             List of InfluxDB Point objects.
         """
-        # Determine metric name from data
-        metric_name = self._extract_metric_name(data)
+        items = self._normalize_payload(data)
+        validator = get_metric_validator()
+        valid_items, failures = validator.validate_items(items)
 
-        if not metric_name:
-            logger.warning("no_metric_name_found", data_keys=list(data.keys()))
-            return []
+        for failure in failures:
+            logger.warning(
+                "metric_schema_validation_failed",
+                schema=failure.schema,
+                error=failure.error,
+                metric_name=failure.item.get("name"),
+                data_keys=list(failure.item.keys()),
+            )
 
-        transformer = self.get_transformer(metric_name)
-        return transformer.transform(data)
+        items = valid_items
+        points: list[Point] = []
 
-    def _extract_metric_name(self, data: dict[str, Any]) -> str | None:
+        for item in items:
+            metric_name = self._extract_metric_name(item)
+            if not metric_name:
+                logger.warning("no_metric_name_found", data_keys=list(item.keys()))
+                continue
+
+            transformer = self.get_transformer(metric_name)
+            points.extend(transformer.transform(item))
+
+        return points
+
+    def _extract_metric_name(self, data: JSONObject) -> str | None:
         """Extract metric name from data payload."""
         # Try common field names
         for field in ["name", "type", "metric", "dataType"]:

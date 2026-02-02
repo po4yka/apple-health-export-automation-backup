@@ -1,11 +1,11 @@
 """Sleep analysis transformer."""
 
 from datetime import datetime
-from typing import Any
 
 import structlog
 from influxdb_client import Point
 
+from ..types import JSONObject
 from .base import BaseTransformer, SleepAnalysis
 
 logger = structlog.get_logger(__name__)
@@ -18,12 +18,9 @@ class SleepTransformer(BaseTransformer):
 
     def can_transform(self, metric_name: str) -> bool:
         """Check if this is a sleep-related metric."""
-        return any(
-            keyword in metric_name.lower()
-            for keyword in ["sleep", "inbed", "in_bed"]
-        )
+        return any(keyword in metric_name.lower() for keyword in ["sleep", "inbed", "in_bed"])
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform sleep data to InfluxDB points."""
         points = []
 
@@ -44,35 +41,42 @@ class SleepTransformer(BaseTransformer):
 
         return points
 
-    def _transform_sleep_analysis(self, item: dict[str, Any]) -> list[Point]:
+    def _transform_sleep_analysis(self, item: JSONObject) -> list[Point]:
         """Transform aggregated sleep analysis data."""
         points = []
 
         try:
             sleep = SleepAnalysis.model_validate(item)
 
+            # Health Auto Export sends units: "hr"; convert to minutes
+            units = str(item.get("units", "min")).lower()
+            mul = 60.0 if units == "hr" else 1.0
+
             point = Point(self.measurement).tag("source", self._get_source(item))
 
-            # Add sleep duration fields
-            if sleep.asleep is not None:
-                point.field("duration_min", float(sleep.asleep))
+            # totalSleep is the actual total; asleep is just the unspecified stage
+            total = sleep.totalSleep if sleep.totalSleep is not None else sleep.asleep
+            if total is not None:
+                point.field("duration_min", float(total) * mul)
             if sleep.deep is not None:
-                point.field("deep_min", float(sleep.deep))
+                point.field("deep_min", float(sleep.deep) * mul)
             if sleep.rem is not None:
-                point.field("rem_min", float(sleep.rem))
+                point.field("rem_min", float(sleep.rem) * mul)
             if sleep.core is not None:
-                point.field("core_min", float(sleep.core))
+                point.field("core_min", float(sleep.core) * mul)
             if sleep.awake is not None:
-                point.field("awake_min", float(sleep.awake))
+                point.field("awake_min", float(sleep.awake) * mul)
             if sleep.inBed is not None:
-                point.field("in_bed_min", float(sleep.inBed))
+                point.field("in_bed_min", float(sleep.inBed) * mul)
 
             # Calculate sleep quality score if we have enough data
-            if sleep.asleep and sleep.inBed and sleep.inBed > 0:
-                quality = (sleep.asleep / sleep.inBed) * 100
+            if total and sleep.inBed and sleep.inBed > 0:
+                quality = (total / sleep.inBed) * 100
                 point.field("quality_score", round(quality, 1))
 
-            point.time(sleep.date)
+            # Use sleepStart as timestamp so sub-sessions don't overwrite each other
+            timestamp = sleep.sleepStart if sleep.sleepStart else sleep.date
+            point.time(timestamp)
             points.append(point)
 
         except Exception as e:
@@ -85,7 +89,7 @@ class SleepTransformer(BaseTransformer):
 
         return points
 
-    def _transform_sleep_stage(self, item: dict[str, Any]) -> list[Point]:
+    def _transform_sleep_stage(self, item: JSONObject) -> list[Point]:
         """Transform individual sleep stage data."""
         points = []
 
@@ -101,21 +105,25 @@ class SleepTransformer(BaseTransformer):
             if isinstance(date, str):
                 date = datetime.fromisoformat(date.replace("Z", "+00:00"))
 
+            # Health Auto Export may send units: "hr"; convert to minutes
+            units = str(item.get("units", "min")).lower()
+            mul = 60.0 if units == "hr" else 1.0
+
             point = Point(self.measurement).tag("source", self._get_source(item))
 
             # Map sleep stage to field
             if "asleep" in name and "deep" in name:
-                point.field("deep_min", float(qty))
+                point.field("deep_min", float(qty) * mul)
             elif "asleep" in name and "rem" in name:
-                point.field("rem_min", float(qty))
+                point.field("rem_min", float(qty) * mul)
             elif "asleep" in name and "core" in name:
-                point.field("core_min", float(qty))
+                point.field("core_min", float(qty) * mul)
             elif "awake" in name:
-                point.field("awake_min", float(qty))
+                point.field("awake_min", float(qty) * mul)
             elif "inbed" in name or "in_bed" in name:
-                point.field("in_bed_min", float(qty))
+                point.field("in_bed_min", float(qty) * mul)
             elif "asleep" in name:
-                point.field("duration_min", float(qty))
+                point.field("duration_min", float(qty) * mul)
             else:
                 # Unknown sleep metric, store as generic
                 return points

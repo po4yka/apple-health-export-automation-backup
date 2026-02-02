@@ -1,9 +1,8 @@
 """Vitals transformer for SpO2, respiratory rate, blood pressure, temperature."""
 
-from typing import Any
-
 from influxdb_client import Point
 
+from ..types import JSONObject
 from .base import BaseTransformer, HealthMetric
 
 # Metrics that map to vitals measurement
@@ -26,6 +25,9 @@ VITALS_METRICS = {
     "temperature": "temp_c",
     "vo2max": "vo2max",
     "vo2Max": "vo2max",
+    "vo2_max": "vo2max",
+    "blood_oxygen_saturation": "spo2_pct",
+    "bloodOxygenSaturation": "spo2_pct",
 }
 
 
@@ -51,7 +53,7 @@ class VitalsTransformer(BaseTransformer):
             ]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform vitals data to InfluxDB points."""
         points = []
 
@@ -65,12 +67,7 @@ class VitalsTransformer(BaseTransformer):
 
                 # Determine field name
                 metric_name = metric.name.lower().replace(" ", "_")
-                field_name = "value"  # default fallback
-
-                for key, field in VITALS_METRICS.items():
-                    if key.lower() in metric_name or metric_name in key.lower():
-                        field_name = field
-                        break
+                field_name = self._lookup_field(metric_name, VITALS_METRICS)
 
                 # Unit conversions
                 value = float(metric.qty)

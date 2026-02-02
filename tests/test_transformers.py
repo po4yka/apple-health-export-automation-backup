@@ -1,14 +1,12 @@
 """Tests for health data transformers."""
 
-from datetime import datetime, timezone
-
-import pytest
-
 from health_ingest.transformers import (
     ActivityTransformer,
+    AudioTransformer,
     BodyTransformer,
     GenericTransformer,
     HeartTransformer,
+    MobilityTransformer,
     SleepTransformer,
     TransformerRegistry,
     VitalsTransformer,
@@ -202,9 +200,7 @@ class TestWorkoutTransformer:
             self.transformer._normalize_workout_type("traditionalStrengthTraining")
             == "strength_training"
         )
-        assert (
-            self.transformer._normalize_workout_type("highIntensityIntervalTraining") == "hiit"
-        )
+        assert self.transformer._normalize_workout_type("highIntensityIntervalTraining") == "hiit"
 
 
 class TestBodyTransformer:
@@ -320,6 +316,184 @@ class TestGenericTransformer:
         assert self.transformer._normalize_metric_name("already_snake_case") == "already_snake_case"
 
 
+class TestMobilityTransformer:
+    """Tests for MobilityTransformer."""
+
+    def setup_method(self):
+        self.transformer = MobilityTransformer()
+
+    def test_can_transform_walking_speed(self):
+        assert self.transformer.can_transform("walking_speed")
+        assert self.transformer.can_transform("walkingSpeed")
+
+    def test_can_transform_walking_step_length(self):
+        assert self.transformer.can_transform("walking_step_length")
+        assert self.transformer.can_transform("walkingStepLength")
+
+    def test_can_transform_stair_speed(self):
+        assert self.transformer.can_transform("stair_speed_up")
+        assert self.transformer.can_transform("stair_speed_down")
+
+    def test_can_transform_walking_asymmetry(self):
+        assert self.transformer.can_transform("walking_asymmetry_percentage")
+
+    def test_can_transform_six_minute_walk(self):
+        assert self.transformer.can_transform("six_minute_walk_test_distance")
+
+    def test_cannot_transform_step_count(self):
+        assert not self.transformer.can_transform("step_count")
+
+    def test_cannot_transform_walking_running_distance(self):
+        assert not self.transformer.can_transform("walking_running_distance")
+
+    def test_transform_walking_speed(self):
+        data = {
+            "name": "walking_speed",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 1.2,
+            "source": "iPhone",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        point = points[0]
+        assert point._name == "mobility"
+        assert point._tags["source"] == "iPhone"
+
+    def test_transform_walking_asymmetry_pct(self):
+        data = {
+            "name": "walking_asymmetry_percentage",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 8.5,
+            "source": "iPhone",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+
+    def test_transform_asymmetry_fraction_normalized(self):
+        data = {
+            "name": "walking_asymmetry_percentage",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 0.085,
+            "source": "iPhone",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+
+
+class TestAudioTransformer:
+    """Tests for AudioTransformer."""
+
+    def setup_method(self):
+        self.transformer = AudioTransformer()
+
+    def test_can_transform_headphone_audio(self):
+        assert self.transformer.can_transform("headphone_audio_exposure")
+        assert self.transformer.can_transform("headphoneAudioExposure")
+
+    def test_can_transform_environmental_audio(self):
+        assert self.transformer.can_transform("environmental_audio_exposure")
+        assert self.transformer.can_transform("environmentalAudioExposure")
+
+    def test_cannot_transform_unrelated(self):
+        assert not self.transformer.can_transform("heart_rate")
+        assert not self.transformer.can_transform("step_count")
+
+    def test_transform_headphone_audio(self):
+        data = {
+            "name": "headphone_audio_exposure",
+            "date": "2024-01-15T14:00:00+00:00",
+            "qty": 72.5,
+            "source": "iPhone",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        point = points[0]
+        assert point._name == "audio"
+        assert point._tags["source"] == "iPhone"
+
+    def test_transform_environmental_audio(self):
+        data = {
+            "name": "environmental_audio_exposure",
+            "date": "2024-01-15T14:00:00+00:00",
+            "qty": 65.0,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        point = points[0]
+        assert point._name == "audio"
+
+
+class TestFieldMappingFixes:
+    """Tests verifying correct field mapping after substring fix."""
+
+    def test_walking_running_distance_maps_correctly(self):
+        transformer = ActivityTransformer()
+        data = {
+            "name": "walking_running_distance",
+            "date": "2024-01-15T23:59:00+00:00",
+            "qty": 5200,
+            "source": "iPhone",
+        }
+
+        points = transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._name == "activity"
+
+    def test_vo2_max_maps_correctly(self):
+        transformer = VitalsTransformer()
+        data = {
+            "name": "vo2_max",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 42.5,
+            "source": "Apple Watch",
+        }
+
+        points = transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._name == "vitals"
+
+    def test_walking_step_length_maps_to_mobility(self):
+        transformer = MobilityTransformer()
+        data = {
+            "name": "walking_step_length",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 72.0,
+            "source": "iPhone",
+        }
+
+        points = transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._name == "mobility"
+
+    def test_blood_oxygen_saturation_maps_correctly(self):
+        transformer = VitalsTransformer()
+        data = {
+            "name": "blood_oxygen_saturation",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": 97,
+            "source": "Apple Watch",
+        }
+
+        points = transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._name == "vitals"
+
+
 class TestTransformerRegistry:
     """Tests for TransformerRegistry."""
 
@@ -349,6 +523,22 @@ class TestTransformerRegistry:
     def test_routes_to_vitals_transformer(self):
         transformer = self.registry.get_transformer("oxygen_saturation")
         assert isinstance(transformer, VitalsTransformer)
+
+    def test_routes_to_mobility_transformer(self):
+        transformer = self.registry.get_transformer("walking_speed")
+        assert isinstance(transformer, MobilityTransformer)
+
+    def test_routes_to_audio_transformer(self):
+        transformer = self.registry.get_transformer("headphone_audio_exposure")
+        assert isinstance(transformer, AudioTransformer)
+
+    def test_walking_step_length_routes_to_mobility_not_activity(self):
+        transformer = self.registry.get_transformer("walking_step_length")
+        assert isinstance(transformer, MobilityTransformer)
+
+    def test_walking_running_distance_routes_to_activity(self):
+        transformer = self.registry.get_transformer("walking_running_distance")
+        assert isinstance(transformer, ActivityTransformer)
 
     def test_falls_back_to_generic(self):
         transformer = self.registry.get_transformer("completely_unknown_metric_xyz")

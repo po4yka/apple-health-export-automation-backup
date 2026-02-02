@@ -1,9 +1,8 @@
 """Workout transformer."""
 
-from typing import Any
-
 from influxdb_client import Point
 
+from ..types import JSONObject
 from .base import BaseTransformer, WorkoutMetric
 
 
@@ -15,11 +14,10 @@ class WorkoutTransformer(BaseTransformer):
     def can_transform(self, metric_name: str) -> bool:
         """Check if this is workout data."""
         return any(
-            keyword in metric_name.lower()
-            for keyword in ["workout", "exercise", "training"]
+            keyword in metric_name.lower() for keyword in ["workout", "exercise", "training"]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform workout data to InfluxDB points."""
         points = []
 
@@ -30,9 +28,7 @@ class WorkoutTransformer(BaseTransformer):
             try:
                 workout = WorkoutMetric.model_validate(item)
 
-                workout_type = self._sanitize_tag(
-                    self._normalize_workout_type(workout.name)
-                )
+                workout_type = self._sanitize_tag(self._normalize_workout_type(workout.name))
                 point = (
                     Point(self.measurement)
                     .tag("source", self._get_source(item))
@@ -74,7 +70,7 @@ class WorkoutTransformer(BaseTransformer):
         name = workout_name.lower()
         for prefix in ["hkworkoutactivitytype", "workout_"]:
             if name.startswith(prefix):
-                name = name[len(prefix):]
+                name = name[len(prefix) :]
 
         # Common normalizations
         normalizations = {

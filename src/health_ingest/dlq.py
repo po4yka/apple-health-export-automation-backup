@@ -88,6 +88,13 @@ class DeadLetterQueue:
         self._total_replayed = 0
         self._total_failed_replays = 0
 
+    def _connect(self) -> sqlite3.Connection:
+        """Open a SQLite connection with safer concurrency settings."""
+        conn = sqlite3.connect(self._db_path, timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        return conn
+
     async def _ensure_initialized(self) -> None:
         """Ensure database is initialized."""
         if self._initialized:
@@ -98,7 +105,7 @@ class DeadLetterQueue:
         def init_db() -> None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS dlq_entries (
                         id TEXT PRIMARY KEY,
@@ -139,7 +146,7 @@ class DeadLetterQueue:
 
         Args:
             category: Error category for classification.
-            topic: MQTT topic of the failed message.
+            topic: Topic of the failed message.
             payload: Raw payload bytes.
             error: Exception that caused the failure.
             archive_id: Optional archive ID for correlation.
@@ -158,7 +165,7 @@ class DeadLetterQueue:
         loop = asyncio.get_running_loop()
 
         def do_enqueue() -> None:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
                     INSERT INTO dlq_entries (
@@ -210,7 +217,7 @@ class DeadLetterQueue:
         loop = asyncio.get_running_loop()
 
         def do_get() -> DLQEntry | None:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute(
                     """
                     SELECT id, category, topic, payload, error_message,
@@ -260,7 +267,7 @@ class DeadLetterQueue:
         loop = asyncio.get_running_loop()
 
         def do_get() -> list[DLQEntry]:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 if category:
                     cursor = conn.execute(
                         """
@@ -411,7 +418,7 @@ class DeadLetterQueue:
         loop = asyncio.get_running_loop()
 
         def do_delete() -> bool:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute(
                     "DELETE FROM dlq_entries WHERE id = ?",
                     (entry_id,),
@@ -427,7 +434,7 @@ class DeadLetterQueue:
         now = datetime.now()
 
         def do_update() -> None:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 conn.execute(
                     """
                     UPDATE dlq_entries
@@ -446,7 +453,7 @@ class DeadLetterQueue:
         cutoff = (datetime.now() - timedelta(days=self._retention_days)).isoformat()
 
         def do_cleanup() -> tuple[int, int]:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 # Delete old entries
                 cursor = conn.execute(
                     "DELETE FROM dlq_entries WHERE created_at < ?",
@@ -493,7 +500,7 @@ class DeadLetterQueue:
         loop = asyncio.get_running_loop()
 
         def do_stats() -> dict[str, Any]:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute("SELECT COUNT(*) FROM dlq_entries")
                 total = cursor.fetchone()[0]
 
@@ -532,7 +539,7 @@ class DeadLetterQueue:
         loop = asyncio.get_running_loop()
 
         def do_clear() -> int:
-            with sqlite3.connect(self._db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute("DELETE FROM dlq_entries")
                 conn.commit()
                 return cursor.rowcount

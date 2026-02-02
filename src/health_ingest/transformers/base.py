@@ -7,9 +7,26 @@ from typing import Any
 
 import structlog
 from influxdb_client import Point
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ..types import JSONObject
 
 logger = structlog.get_logger(__name__)
+
+
+# Regex to normalize Health Auto Export date format:
+# "2022-06-12 23:59:00 +0400" -> "2022-06-12T23:59:00+04:00"
+_DATE_SPACE_TZ_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2})\s([+-])(\d{2})(\d{2})$")
+
+
+def _normalize_date(value: Any) -> Any:
+    """Normalize date strings from Health Auto Export format to ISO 8601."""
+    if not isinstance(value, str):
+        return value
+    m = _DATE_SPACE_TZ_RE.match(value)
+    if m:
+        return f"{m[1]}T{m[2]}{m[3]}{m[4]}:{m[5]}"
+    return value
 
 
 class HealthMetric(BaseModel):
@@ -26,6 +43,11 @@ class HealthMetric(BaseModel):
     max: float | None = Field(default=None, description="Maximum value")
     avg: float | None = Field(default=None, description="Average value")
 
+    @field_validator("date", mode="before")
+    @classmethod
+    def normalize_date(cls, v: Any) -> Any:
+        return _normalize_date(v)
+
 
 class WorkoutMetric(BaseModel):
     """Model for workout metrics."""
@@ -40,6 +62,11 @@ class WorkoutMetric(BaseModel):
     maxHeartRate: float | None = Field(default=None, alias="maxHeartRate")
     source: str | None = Field(default=None)
 
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def normalize_date(cls, v: Any) -> Any:
+        return _normalize_date(v)
+
 
 class SleepAnalysis(BaseModel):
     """Model for sleep analysis data."""
@@ -47,13 +74,19 @@ class SleepAnalysis(BaseModel):
     date: datetime = Field(description="Sleep date")
     sleepStart: datetime | None = Field(default=None, alias="sleepStart")
     sleepEnd: datetime | None = Field(default=None, alias="sleepEnd")
-    inBed: float | None = Field(default=None, description="Time in bed (minutes)")
-    asleep: float | None = Field(default=None, description="Time asleep (minutes)")
-    deep: float | None = Field(default=None, description="Deep sleep (minutes)")
-    rem: float | None = Field(default=None, description="REM sleep (minutes)")
-    core: float | None = Field(default=None, description="Core sleep (minutes)")
-    awake: float | None = Field(default=None, description="Awake time (minutes)")
+    inBed: float | None = Field(default=None, description="Time in bed")
+    asleep: float | None = Field(default=None, description="Asleep (unspecified stage)")
+    totalSleep: float | None = Field(default=None, description="Total sleep time")
+    deep: float | None = Field(default=None, description="Deep sleep")
+    rem: float | None = Field(default=None, description="REM sleep")
+    core: float | None = Field(default=None, description="Core sleep")
+    awake: float | None = Field(default=None, description="Awake time")
     source: str | None = Field(default=None)
+
+    @field_validator("date", "sleepStart", "sleepEnd", mode="before")
+    @classmethod
+    def normalize_date(cls, v: Any) -> Any:
+        return _normalize_date(v)
 
 
 class BaseTransformer(ABC):
@@ -71,7 +104,7 @@ class BaseTransformer(ABC):
         pass
 
     @abstractmethod
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform raw data into InfluxDB points.
 
         Args:
@@ -82,7 +115,7 @@ class BaseTransformer(ABC):
         """
         pass
 
-    def _get_source(self, data: dict[str, Any]) -> str:
+    def _get_source(self, data: JSONObject) -> str:
         """Extract source from data or use default."""
         return self._sanitize_tag(data.get("source") or self._default_source)
 
@@ -102,10 +135,28 @@ class BaseTransformer(ABC):
         sanitized = re.sub(r"[^a-zA-Z0-9_.\-]", "_", str(value))
         return sanitized[:max_length]
 
+    def _lookup_field(
+        self,
+        metric_name: str,
+        field_map: dict[str, str],
+        default: str = "value",
+    ) -> str:
+        """Look up the InfluxDB field name for a metric.
+
+        Uses normalized exact matching instead of substring containment.
+        """
+        if metric_name in field_map:
+            return field_map[metric_name]
+        lower = metric_name.lower()
+        for key, field in field_map.items():
+            if key.lower() == lower:
+                return field
+        return default
+
     def _log_transform_error(
         self,
         error: Exception,
-        item: dict[str, Any],
+        item: JSONObject,
         context: str | None = None,
     ) -> None:
         """Log a transformation error with context.

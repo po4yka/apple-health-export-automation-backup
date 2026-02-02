@@ -12,18 +12,18 @@ FROM python:3.13-slim AS builder
 
 # Metadata
 LABEL org.opencontainers.image.title="health-ingest"
-LABEL org.opencontainers.image.description="Apple Health data ingestion from MQTT to InfluxDB"
+LABEL org.opencontainers.image.description="Apple Health data ingestion via REST API to InfluxDB"
 LABEL org.opencontainers.image.source="https://github.com/po4yka/apple-health-export-automation-backup"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # Environment configuration
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_SYSTEM_PYTHON=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
     UV_COMPILE_BYTECODE=1
 
-# Install uv package manager
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv package manager (via pip; avoids GHCR rate-limit issues)
+RUN pip install --no-cache-dir uv
 
 # Set work directory
 WORKDIR /app
@@ -51,12 +51,13 @@ RUN useradd --create-home --shell /bin/bash appuser
 
 # Environment
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-# Copy uv and installed packages from builder
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Copy venv and app from builder
 COPY --from=builder /app /app
 
 # Switch to non-root user
@@ -64,7 +65,7 @@ USER appuser
 
 # Health check - verifies InfluxDB connectivity
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
-    CMD uv run health-check || exit 1
+    CMD ["health-check"]
 
 # Run the service
-CMD ["uv", "run", "health-ingest"]
+CMD ["health-ingest"]

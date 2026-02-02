@@ -1,68 +1,13 @@
 """Configuration management using pydantic-settings."""
 
 import threading
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Valid log levels
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-
-
-class MQTTSettings(BaseSettings):
-    """MQTT connection settings."""
-
-    model_config = SettingsConfigDict(env_prefix="MQTT_")
-
-    host: str = Field(default="192.168.1.175", description="MQTT broker host")
-    port: int = Field(default=1883, description="MQTT broker port")
-    username: str | None = Field(default=None, description="MQTT username")
-    password: str | None = Field(default=None, description="MQTT password")
-    topic: str = Field(default="health/export/#", description="MQTT topic to subscribe")
-    client_id: str = Field(default="health-ingest", description="MQTT client ID")
-    keepalive: int = Field(default=60, description="MQTT keepalive interval in seconds")
-    clean_session: bool = Field(default=True, description="Clean session on connect")
-    reconnect_delay_min: float = Field(
-        default=1.0, description="Minimum reconnect delay in seconds"
-    )
-    reconnect_delay_max: float = Field(
-        default=60.0, description="Maximum reconnect delay in seconds"
-    )
-
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port is in valid range."""
-        if not 1 <= v <= 65535:
-            raise ValueError(f"Port must be between 1 and 65535, got {v}")
-        return v
-
-    @field_validator("keepalive")
-    @classmethod
-    def validate_keepalive(cls, v: int) -> int:
-        """Validate keepalive is positive."""
-        if v < 1:
-            raise ValueError(f"Keepalive must be at least 1 second, got {v}")
-        return v
-
-    @field_validator("reconnect_delay_min", "reconnect_delay_max")
-    @classmethod
-    def validate_reconnect_delay(cls, v: float) -> float:
-        """Validate reconnect delays are positive."""
-        if v <= 0:
-            raise ValueError(f"Reconnect delay must be > 0 seconds, got {v}")
-        return v
-
-    @field_validator("reconnect_delay_max")
-    @classmethod
-    def validate_reconnect_delay_bounds(cls, v: float, info) -> float:
-        """Ensure max reconnect delay is >= min."""
-        min_value = info.data.get("reconnect_delay_min")
-        if min_value is not None and v < min_value:
-            raise ValueError(
-                f"Reconnect delay max must be >= min ({min_value}), got {v}"
-            )
-        return v
 
 
 class InfluxDBSettings(BaseSettings):
@@ -111,6 +56,32 @@ class AnthropicSettings(BaseSettings):
 
     api_key: str | None = Field(default=None, description="Anthropic API key")
     model: str = Field(default="claude-sonnet-4-20250514", description="Claude model to use")
+
+
+class OpenAISettings(BaseSettings):
+    """OpenAI API settings for health reports."""
+
+    model_config = SettingsConfigDict(env_prefix="OPENAI_")
+
+    api_key: str | None = Field(default=None, description="OpenAI API key")
+    model: str = Field(default="gpt-4o-mini", description="OpenAI model to use")
+    base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="OpenAI-compatible base URL",
+    )
+
+
+class GrokSettings(BaseSettings):
+    """Grok (xAI) API settings for health reports."""
+
+    model_config = SettingsConfigDict(env_prefix="GROK_")
+
+    api_key: str | None = Field(default=None, description="Grok API key")
+    model: str = Field(default="grok-2-latest", description="Grok model to use")
+    base_url: str = Field(
+        default="https://api.x.ai/v1",
+        description="Grok OpenAI-compatible base URL",
+    )
 
 
 class ArchiveSettings(BaseSettings):
@@ -203,18 +174,18 @@ class DLQSettings(BaseSettings):
         return v
 
 
-class ClawdbotSettings(BaseSettings):
-    """Clawdbot gateway settings for report delivery."""
+class OpenClawSettings(BaseSettings):
+    """OpenClaw gateway settings for report delivery."""
 
-    model_config = SettingsConfigDict(env_prefix="CLAWDBOT_")
+    model_config = SettingsConfigDict(env_prefix="OPENCLAW_")
 
-    enabled: bool = Field(default=True, description="Enable Telegram delivery via Clawdbot")
+    enabled: bool = Field(default=True, description="Enable Telegram delivery via OpenClaw")
     gateway_url: str = Field(
-        default="http://clawdbot-gateway:18789",
-        description="Clawdbot gateway URL",
+        default="http://openclaw-gateway:18789",
+        description="OpenClaw gateway URL",
     )
     hooks_token: str | None = Field(default=None, description="Hooks API authentication token")
-    telegram_user_id: int = Field(default=94225168, description="Target Telegram user ID")
+    telegram_user_id: int = Field(default=0, description="Target Telegram user ID")
     max_retries: int = Field(default=3, description="Maximum delivery retries")
     retry_delay_seconds: float = Field(default=5.0, description="Initial retry delay in seconds")
 
@@ -235,6 +206,10 @@ class InsightSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="INSIGHT_")
 
     prefer_ai: bool = Field(default=True, description="Prefer AI over rules when available")
+    ai_provider: Literal["anthropic", "openai", "grok"] = Field(
+        default="anthropic",
+        description="AI provider to use for insights",
+    )
     max_insights: int = Field(default=5, description="Maximum insights to include in report")
     include_reasoning: bool = Field(default=True, description="Include reasoning in insights")
     ai_timeout_seconds: float = Field(default=30.0, description="AI API timeout in seconds")
@@ -250,6 +225,38 @@ class InsightSettings(BaseSettings):
         return v
 
 
+class HTTPSettings(BaseSettings):
+    """HTTP ingestion API settings."""
+
+    model_config = SettingsConfigDict(env_prefix="HTTP_")
+
+    enabled: bool = Field(default=True, description="Enable HTTP ingestion endpoint")
+    host: str = Field(default="0.0.0.0", description="HTTP server bind address")
+    port: int = Field(default=8080, description="HTTP server port")
+    auth_token: str = Field(default="", description="Bearer token for authentication")
+    max_request_size: int = Field(
+        default=10_485_760, description="Maximum request body size in bytes (10MB)"
+    )
+
+    @field_validator("port")
+    @classmethod
+    def validate_port(cls, v: int) -> int:
+        """Validate port is in valid range."""
+        if not 1 <= v <= 65535:
+            raise ValueError(f"Port must be between 1 and 65535, got {v}")
+        return v
+
+    @field_validator("max_request_size")
+    @classmethod
+    def validate_max_request_size(cls, v: int) -> int:
+        """Validate max request size is reasonable."""
+        if v < 1024:
+            raise ValueError(f"Max request size must be at least 1KB, got {v}")
+        if v > 104_857_600:
+            raise ValueError(f"Max request size too large (max 100MB), got {v}")
+        return v
+
+
 class AppSettings(BaseSettings):
     """Application settings."""
 
@@ -260,6 +267,7 @@ class AppSettings(BaseSettings):
     default_source: str = Field(
         default="health_auto_export", description="Default source tag for metrics"
     )
+    prometheus_port: int = Field(default=9090, description="Port for Prometheus metrics server")
 
     @field_validator("log_level")
     @classmethod
@@ -281,33 +289,70 @@ class AppSettings(BaseSettings):
             raise ValueError(f"Invalid log format '{v}'. Must be 'json' or 'console'")
         return normalized
 
+    @field_validator("prometheus_port")
+    @classmethod
+    def validate_prometheus_port(cls, v: int) -> int:
+        """Validate Prometheus port is in valid range."""
+        if not 1 <= v <= 65535:
+            raise ValueError(f"Port must be between 1 and 65535, got {v}")
+        return v
+
+
+class TracingSettings(BaseSettings):
+    """OpenTelemetry tracing settings."""
+
+    model_config = SettingsConfigDict(env_prefix="OTEL_")
+
+    enabled: bool = Field(default=False, description="Enable OpenTelemetry tracing")
+    service_name: str = Field(default="health-ingest", description="Service name")
+
+
+class BotSettings(BaseSettings):
+    """Telegram bot webhook settings."""
+
+    model_config = SettingsConfigDict(env_prefix="BOT_")
+
+    enabled: bool = Field(default=False, description="Enable Telegram bot webhook")
+    webhook_token: str = Field(default="", description="Bearer token for bot webhook auth")
+    response_timeout_seconds: float = Field(
+        default=15.0, description="Timeout for bot command processing"
+    )
+
 
 class Settings(BaseSettings):
     """Combined application settings."""
 
-    mqtt: MQTTSettings = Field(default_factory=MQTTSettings)
+    http: HTTPSettings = Field(default_factory=HTTPSettings)
     influxdb: InfluxDBSettings = Field(default_factory=InfluxDBSettings)
     anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
+    openai: OpenAISettings = Field(default_factory=OpenAISettings)
+    grok: GrokSettings = Field(default_factory=GrokSettings)
     app: AppSettings = Field(default_factory=AppSettings)
     archive: ArchiveSettings = Field(default_factory=ArchiveSettings)
     dedup: DedupSettings = Field(default_factory=DedupSettings)
     dlq: DLQSettings = Field(default_factory=DLQSettings)
-    clawdbot: ClawdbotSettings = Field(default_factory=ClawdbotSettings)
+    openclaw: OpenClawSettings = Field(default_factory=OpenClawSettings)
     insight: InsightSettings = Field(default_factory=InsightSettings)
+    tracing: TracingSettings = Field(default_factory=TracingSettings)
+    bot: BotSettings = Field(default_factory=BotSettings)
 
     @classmethod
     def load(cls) -> "Settings":
         """Load settings from environment variables."""
         return cls(
-            mqtt=MQTTSettings(),
+            http=HTTPSettings(),
             influxdb=InfluxDBSettings(),
             anthropic=AnthropicSettings(),
+            openai=OpenAISettings(),
+            grok=GrokSettings(),
             app=AppSettings(),
             archive=ArchiveSettings(),
             dedup=DedupSettings(),
             dlq=DLQSettings(),
-            clawdbot=ClawdbotSettings(),
+            openclaw=OpenClawSettings(),
             insight=InsightSettings(),
+            tracing=TracingSettings(),
+            bot=BotSettings(),
         )
 
 

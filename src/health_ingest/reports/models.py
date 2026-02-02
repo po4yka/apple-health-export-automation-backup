@@ -1,7 +1,15 @@
 """Data models for health insights and privacy-safe metrics."""
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Literal
+
+
+class SummaryMode(str, Enum):
+    """Daily summary mode."""
+
+    MORNING = "morning"
+    EVENING = "evening"
 
 
 @dataclass
@@ -138,3 +146,145 @@ class DeliveryResult:
     attempt: int
     run_id: str | None = None
     error: str | None = None
+
+
+@dataclass
+class DailyMetrics:
+    """Raw daily health values from InfluxDB."""
+
+    # Sleep
+    sleep_duration_min: float | None = None
+    sleep_deep_min: float | None = None
+    sleep_rem_min: float | None = None
+    sleep_core_min: float | None = None
+    sleep_awake_min: float | None = None
+    sleep_quality_score: float | None = None
+
+    # Heart
+    resting_hr: float | None = None
+    hrv_ms: float | None = None
+
+    # Activity
+    steps: int = 0
+    active_calories: int = 0
+    exercise_min: int = 0
+    stand_hours: int = 0
+    distance_m: float = 0
+    floors_climbed: int = 0
+
+    # Workouts
+    workouts: list[dict] = field(default_factory=list)
+
+    # Body
+    weight_kg: float | None = None
+
+    # Vitals
+    spo2_pct: float | None = None
+    respiratory_rate: float | None = None
+
+    # 7-day averages
+    avg_7d_steps: float | None = None
+    avg_7d_sleep_duration_min: float | None = None
+    avg_7d_resting_hr: float | None = None
+    avg_7d_hrv_ms: float | None = None
+    avg_7d_exercise_min: float | None = None
+
+
+@dataclass
+class PrivacySafeDailyMetrics:
+    """Privacy-safe daily metrics for AI consumption."""
+
+    mode: SummaryMode = SummaryMode.MORNING
+
+    # Sleep
+    sleep_duration_min: float | None = None
+    sleep_deep_min: float | None = None
+    sleep_rem_min: float | None = None
+    sleep_core_min: float | None = None
+    sleep_awake_min: float | None = None
+    sleep_quality_score: float | None = None
+
+    # Heart
+    resting_hr: float | None = None
+    hrv_ms: float | None = None
+
+    # Activity
+    steps: int = 0
+    active_calories: int = 0
+    exercise_min: int = 0
+    stand_hours: int = 0
+
+    # Workouts
+    workout_summaries: list[str] = field(default_factory=list)
+
+    # Body
+    weight_kg: float | None = None
+
+    # Comparisons to 7-day average (percentage)
+    steps_vs_7d_avg: float | None = None
+    exercise_vs_7d_avg: float | None = None
+    hrv_vs_7d_avg: float | None = None
+
+    def to_summary_text(self) -> str:
+        """Format metrics as text for AI prompt, varies by mode."""
+        lines = []
+
+        if self.mode == SummaryMode.MORNING:
+            lines.append("LAST NIGHT'S SLEEP:")
+            if self.sleep_duration_min is not None:
+                hours = self.sleep_duration_min / 60
+                lines.append(f"  Duration: {hours:.1f} hours ({self.sleep_duration_min:.0f} min)")
+            if self.sleep_deep_min is not None:
+                lines.append(f"  Deep sleep: {self.sleep_deep_min:.0f} min")
+            if self.sleep_rem_min is not None:
+                lines.append(f"  REM sleep: {self.sleep_rem_min:.0f} min")
+            if self.sleep_core_min is not None:
+                lines.append(f"  Core sleep: {self.sleep_core_min:.0f} min")
+            if self.sleep_awake_min is not None:
+                lines.append(f"  Awake: {self.sleep_awake_min:.0f} min")
+            if self.sleep_quality_score is not None:
+                lines.append(f"  Quality score: {self.sleep_quality_score:.0f}%")
+
+            lines.append("\nMORNING VITALS:")
+            if self.resting_hr is not None:
+                lines.append(f"  Resting heart rate: {self.resting_hr:.0f} bpm")
+            if self.hrv_ms is not None:
+                hrv_line = f"  HRV: {self.hrv_ms:.0f} ms"
+                if self.hrv_vs_7d_avg is not None:
+                    hrv_line += f" ({self.hrv_vs_7d_avg:+.0f}% vs 7-day avg)"
+                lines.append(hrv_line)
+            if self.weight_kg is not None:
+                lines.append(f"  Weight: {self.weight_kg:.1f} kg")
+
+            lines.append("\nYESTERDAY'S ACTIVITY:")
+            lines.append(f"  Steps: {self.steps:,}")
+            if self.steps_vs_7d_avg is not None:
+                lines.append(f"  Steps vs 7-day avg: {self.steps_vs_7d_avg:+.0f}%")
+            lines.append(f"  Active calories: {self.active_calories:,}")
+            lines.append(f"  Exercise: {self.exercise_min} min")
+        else:
+            lines.append("TODAY'S ACTIVITY:")
+            lines.append(f"  Steps: {self.steps:,}")
+            if self.steps_vs_7d_avg is not None:
+                lines.append(f"  Steps vs 7-day avg: {self.steps_vs_7d_avg:+.0f}%")
+            lines.append(f"  Active calories: {self.active_calories:,}")
+            lines.append(f"  Exercise: {self.exercise_min} min")
+            if self.exercise_vs_7d_avg is not None:
+                lines.append(f"  Exercise vs 7-day avg: {self.exercise_vs_7d_avg:+.0f}%")
+            lines.append(f"  Stand hours: {self.stand_hours}")
+
+            lines.append("\nHEART:")
+            if self.resting_hr is not None:
+                lines.append(f"  Resting heart rate: {self.resting_hr:.0f} bpm")
+            if self.hrv_ms is not None:
+                hrv_line = f"  HRV: {self.hrv_ms:.0f} ms"
+                if self.hrv_vs_7d_avg is not None:
+                    hrv_line += f" ({self.hrv_vs_7d_avg:+.0f}% vs 7-day avg)"
+                lines.append(hrv_line)
+
+        if self.workout_summaries:
+            lines.append("\nWORKOUTS:")
+            for summary in self.workout_summaries:
+                lines.append(f"  - {summary}")
+
+        return "\n".join(lines)

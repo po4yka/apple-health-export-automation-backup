@@ -1,19 +1,19 @@
-"""Tests for report delivery via Clawdbot."""
+"""Tests for report delivery via OpenClaw."""
 
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from health_ingest.config import ClawdbotSettings
-from health_ingest.reports.delivery import ClawdbotDelivery
+from health_ingest.config import OpenClawSettings
+from health_ingest.reports.delivery import OpenClawDelivery
 from health_ingest.reports.formatter import TelegramFormatter
 from health_ingest.reports.models import InsightResult, PrivacySafeMetrics
 
 
 @pytest.fixture
-def clawdbot_settings():
-    """Create test Clawdbot settings."""
-    return ClawdbotSettings(
+def openclaw_settings():
+    """Create test OpenClaw settings."""
+    return OpenClawSettings(
         enabled=True,
         gateway_url="http://localhost:18789",
         hooks_token="test-token",
@@ -24,9 +24,9 @@ def clawdbot_settings():
 
 
 @pytest.fixture
-def delivery(clawdbot_settings):
-    """Create ClawdbotDelivery instance."""
-    return ClawdbotDelivery(clawdbot_settings)
+def delivery(openclaw_settings):
+    """Create OpenClawDelivery instance."""
+    return OpenClawDelivery(openclaw_settings)
 
 
 @pytest.fixture
@@ -49,8 +49,8 @@ Exercise: 180 min (+15%)
 _RULE-generated insights_"""
 
 
-class TestClawdbotDelivery:
-    """Tests for ClawdbotDelivery class."""
+class TestOpenClawDelivery:
+    """Tests for OpenClawDelivery class."""
 
     @pytest.mark.asyncio
     async def test_send_report_success(self, delivery, sample_report):
@@ -135,8 +135,8 @@ class TestClawdbotDelivery:
     @pytest.mark.asyncio
     async def test_send_report_no_token(self, sample_report):
         """Test failure when no token configured."""
-        settings = ClawdbotSettings(hooks_token=None)
-        delivery = ClawdbotDelivery(settings)
+        settings = OpenClawSettings(hooks_token=None)
+        delivery = OpenClawDelivery(settings)
 
         result = await delivery.send_report(sample_report)
 

@@ -205,6 +205,41 @@ class TestInsightEngine:
 
         return InsightSettings(prefer_ai=True, max_insights=5)
 
+    @pytest.fixture
+    def mock_openai_settings(self):
+        """Create mock OpenAI settings with API key."""
+        from health_ingest.config import OpenAISettings
+
+        return OpenAISettings(api_key="test-key")
+
+    def _patch_openai(self, monkeypatch, response_text: str):
+        """Patch OpenAI client to return the provided response."""
+
+        class _FakeMessage:
+            def __init__(self, content: str) -> None:
+                self.content = content
+
+        class _FakeChoice:
+            def __init__(self, content: str) -> None:
+                self.message = _FakeMessage(content)
+
+        class _FakeCompletions:
+            def __init__(self, content: str) -> None:
+                self._content = content
+
+            def create(self, *args, **kwargs):
+                return type("Response", (), {"choices": [_FakeChoice(self._content)]})()
+
+        class _FakeChat:
+            def __init__(self, content: str) -> None:
+                self.completions = _FakeCompletions(content)
+
+        class _FakeOpenAI:
+            def __init__(self, *args, **kwargs) -> None:
+                self.chat = _FakeChat(response_text)
+
+        monkeypatch.setattr("health_ingest.reports.insights.OpenAI", _FakeOpenAI)
+
     @pytest.mark.asyncio
     async def test_falls_back_to_rules_without_api_key(
         self, mock_anthropic_settings, mock_insight_settings, sample_metrics
@@ -253,3 +288,85 @@ class TestInsightEngine:
         # Check for expected categories
         categories = {i.category for i in insights}
         assert len(categories) >= 1
+
+    @pytest.mark.asyncio
+    async def test_ai_insights_parses_json_response(
+        self,
+        mock_anthropic_settings,
+        mock_openai_settings,
+        mock_insight_settings,
+        sample_metrics,
+        monkeypatch,
+    ):
+        """Test AI response parsing for valid JSON content."""
+        mock_insight_settings.ai_provider = "openai"
+        self._patch_openai(
+            monkeypatch,
+            '[{"category":"activity","headline":"Solid week",'
+            '"reasoning":"Steps up","recommendation":"Keep it up"}]',
+        )
+
+        engine = InsightEngine(
+            anthropic_settings=mock_anthropic_settings,
+            openai_settings=mock_openai_settings,
+            insight_settings=mock_insight_settings,
+        )
+
+        insights = await engine.generate(sample_metrics)
+
+        assert len(insights) == 1
+        assert insights[0].source == "ai"
+        assert insights[0].category == "activity"
+
+    @pytest.mark.asyncio
+    async def test_ai_insights_handles_code_fence_json(
+        self,
+        mock_anthropic_settings,
+        mock_openai_settings,
+        mock_insight_settings,
+        sample_metrics,
+        monkeypatch,
+    ):
+        """Test AI response parsing when JSON is wrapped in code fences."""
+        mock_insight_settings.ai_provider = "openai"
+        self._patch_openai(
+            monkeypatch,
+            '```json\n[{"category":"sleep","headline":"Solid sleep",'
+            '"reasoning":"7.2 hours","recommendation":"Keep routine"}]\n```',
+        )
+
+        engine = InsightEngine(
+            anthropic_settings=mock_anthropic_settings,
+            openai_settings=mock_openai_settings,
+            insight_settings=mock_insight_settings,
+        )
+
+        insights = await engine.generate(sample_metrics)
+
+        assert len(insights) == 1
+        assert insights[0].source == "ai"
+        assert insights[0].category == "sleep"
+
+    @pytest.mark.asyncio
+    async def test_ai_insights_invalid_json_falls_back_to_rules(
+        self,
+        mock_anthropic_settings,
+        mock_openai_settings,
+        mock_insight_settings,
+        sample_metrics,
+        monkeypatch,
+    ):
+        """Test fallback to rules when AI response is invalid JSON."""
+        mock_insight_settings.ai_provider = "openai"
+        self._patch_openai(monkeypatch, "not-json")
+
+        engine = InsightEngine(
+            anthropic_settings=mock_anthropic_settings,
+            openai_settings=mock_openai_settings,
+            insight_settings=mock_insight_settings,
+        )
+
+        insights = await engine.generate(sample_metrics)
+
+        assert insights
+        assert all(insight.source == "rule" for insight in insights)

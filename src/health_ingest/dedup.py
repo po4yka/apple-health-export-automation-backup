@@ -90,6 +90,10 @@ class DeduplicationCache:
             True if point is a duplicate, False otherwise.
         """
         key = self.compute_key(point)
+        return self._is_duplicate_key(key)
+
+    def _is_duplicate_key(self, key: str) -> bool:
+        """Check duplicate status by precomputed key."""
         now = time.time()
 
         with self._lock:
@@ -162,8 +166,13 @@ class DeduplicationCache:
             List of non-duplicate points.
         """
         result = []
+        seen: set[str] = set()
         for point in points:
-            if not self.is_duplicate(point):
+            key = self.compute_key(point)
+            if key in seen:
+                continue
+            if not self._is_duplicate_key(key):
+                seen.add(key)
                 result.append(point)
         return result
 
@@ -171,6 +180,10 @@ class DeduplicationCache:
         """Persist cache to SQLite for restart recovery."""
         if not self._persist_path:
             return
+
+        # Snapshot under lock on the event loop thread (fast, no I/O)
+        with self._lock:
+            entries = list(self._cache.items())
 
         loop = asyncio.get_running_loop()
 
@@ -185,12 +198,8 @@ class DeduplicationCache:
                     )
                 """)
 
-                # Clear and repopulate
+                # Clear and repopulate atomically (within transaction)
                 conn.execute("DELETE FROM dedup_cache")
-
-                with self._lock:
-                    entries = list(self._cache.items())
-
                 conn.executemany(
                     "INSERT INTO dedup_cache (key, timestamp) VALUES (?, ?)",
                     entries,
@@ -218,11 +227,13 @@ class DeduplicationCache:
 
             with sqlite3.connect(self._persist_path) as conn:
                 cursor = conn.execute(
-                    "SELECT key, timestamp FROM dedup_cache ORDER BY timestamp"
+                    "SELECT key, timestamp FROM dedup_cache ORDER BY timestamp DESC LIMIT ?",
+                    (self._max_size,),
                 )
+                rows = list(cursor)
 
                 with self._lock:
-                    for key, ts in cursor:
+                    for key, ts in reversed(rows):
                         # Skip expired entries
                         if now - ts < self._ttl_seconds:
                             self._cache[key] = ts
@@ -244,9 +255,7 @@ class DeduplicationCache:
 
         with self._lock:
             keys_to_remove = [
-                key
-                for key, ts in self._cache.items()
-                if now - ts >= self._ttl_seconds
+                key for key, ts in self._cache.items() if now - ts >= self._ttl_seconds
             ]
             for key in keys_to_remove:
                 del self._cache[key]

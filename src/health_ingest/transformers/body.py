@@ -1,9 +1,8 @@
 """Body composition transformer."""
 
-from typing import Any
-
 from influxdb_client import Point
 
+from ..types import JSONObject
 from .base import BaseTransformer, HealthMetric
 
 # Metrics that map to body measurement
@@ -36,7 +35,7 @@ class BodyTransformer(BaseTransformer):
             for keyword in ["body", "weight", "mass", "fat", "bmi", "lean", "waist", "height"]
         )
 
-    def transform(self, data: dict[str, Any]) -> list[Point]:
+    def transform(self, data: JSONObject) -> list[Point]:
         """Transform body composition data to InfluxDB points."""
         points = []
 
@@ -50,12 +49,7 @@ class BodyTransformer(BaseTransformer):
 
                 # Determine field name
                 metric_name = metric.name.lower().replace(" ", "_")
-                field_name = "value"  # default fallback
-
-                for key, field in BODY_METRICS.items():
-                    if key.lower() in metric_name or metric_name in key.lower():
-                        field_name = field
-                        break
+                field_name = self._lookup_field(metric_name, BODY_METRICS)
 
                 # Unit conversions
                 value = float(metric.qty)
