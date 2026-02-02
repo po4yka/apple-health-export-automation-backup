@@ -1,9 +1,14 @@
 """Vitals transformer for SpO2, respiratory rate, blood pressure, temperature."""
 
+import math
+
+import structlog
 from influxdb_client import Point
 
 from ..types import JSONObject
 from .base import BaseTransformer, HealthMetric
+
+logger = structlog.get_logger(__name__)
 
 # Metrics that map to vitals measurement
 VITALS_METRICS = {
@@ -29,6 +34,32 @@ VITALS_METRICS = {
     "blood_oxygen_saturation": "spo2_pct",
     "bloodOxygenSaturation": "spo2_pct",
 }
+
+# Physiological bounds per field
+_FIELD_BOUNDS: dict[str, tuple[float, float]] = {
+    "spo2_pct": (0.0, 100.0),
+    "respiratory_rate": (1.0, 80.0),
+    "bp_systolic": (40.0, 300.0),
+    "bp_diastolic": (20.0, 200.0),
+    "temp_c": (25.0, 45.0),
+    "vo2max": (5.0, 100.0),
+}
+
+_FAHRENHEIT_UNITS = {"f", "degf", "fahrenheit"}
+
+
+def _convert_temp(value: float, field_name: str, units: str) -> float:
+    """Convert Fahrenheit to Celsius if needed."""
+    if field_name == "temp_c" and units in _FAHRENHEIT_UNITS:
+        return (value - 32) * 5 / 9
+    return value
+
+
+def _normalize_spo2(value: float, field_name: str) -> float:
+    """Normalize SpO2 from fraction to percentage if needed."""
+    if field_name == "spo2_pct" and value <= 1.0:
+        return value * 100
+    return value
 
 
 class VitalsTransformer(BaseTransformer):
@@ -73,13 +104,20 @@ class VitalsTransformer(BaseTransformer):
                 value = float(metric.qty)
                 units = (metric.units or "").lower()
 
-                # Convert Fahrenheit to Celsius for temperature
-                if field_name == "temp_c" and ("f" in units or "fahrenheit" in units):
-                    value = (value - 32) * 5 / 9
+                value = _convert_temp(value, field_name, units)
+                value = _normalize_spo2(value, field_name)
 
-                # SpO2 should be percentage (0-100)
-                if field_name == "spo2_pct" and value <= 1:
-                    value = value * 100
+                # Range validation
+                lo, hi = _FIELD_BOUNDS.get(field_name, (0.0, math.inf))
+                if not (lo <= value <= hi):
+                    logger.warning(
+                        "vitals_value_out_of_range",
+                        field=field_name,
+                        value=value,
+                        lo=lo,
+                        hi=hi,
+                    )
+                    continue
 
                 point = (
                     Point(self.measurement)
@@ -88,11 +126,23 @@ class VitalsTransformer(BaseTransformer):
                     .time(metric.date)
                 )
 
-                # Add min/max if available
-                if metric.min is not None:
-                    point.field(f"{field_name}_min", float(metric.min))
-                if metric.max is not None:
-                    point.field(f"{field_name}_max", float(metric.max))
+                # Add min/max with same conversions and validation
+                for suffix, stat_val in [("min", metric.min), ("max", metric.max)]:
+                    if stat_val is not None:
+                        sv = float(stat_val)
+                        sv = _convert_temp(sv, field_name, units)
+                        sv = _normalize_spo2(sv, field_name)
+                        if lo <= sv <= hi:
+                            point.field(f"{field_name}_{suffix}", sv)
+                        else:
+                            logger.warning(
+                                "vitals_stat_out_of_range",
+                                field=field_name,
+                                stat=suffix,
+                                value=sv,
+                                lo=lo,
+                                hi=hi,
+                            )
 
                 points.append(point)
 

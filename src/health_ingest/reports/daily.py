@@ -398,6 +398,7 @@ class DailyReportGenerator:
             |> range(start: {seven_days_ago.isoformat()}, stop: {ref_utc.isoformat()})
             |> filter(fn: (r) => r._measurement == "heart")
             |> filter(fn: (r) => r._field == "resting_bpm" or r._field == "hrv_ms")
+            |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
         """
         try:
             tables = await query_api.query(heart_query)
@@ -424,6 +425,7 @@ class DailyReportGenerator:
             |> range(start: {seven_days_ago.isoformat()}, stop: {ref_utc.isoformat()})
             |> filter(fn: (r) => r._measurement == "sleep")
             |> filter(fn: (r) => r._field == "duration_min")
+            |> aggregateWindow(every: 1d, fn: max, createEmpty: false)
         """
         try:
             tables = await query_api.query(sleep_query)

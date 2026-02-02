@@ -79,6 +79,115 @@ class TestHeartTransformer:
 
         assert len(points) == 1
 
+    def test_transform_heart_rate_value(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 72.0,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["bpm"] == 72.0
+
+    def test_transform_hrv_value(self):
+        data = {
+            "name": "heartRateVariabilitySDNN",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 45.5,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["hrv_ms"] == 45.5
+
+    def test_negative_heart_rate_rejected(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": -5,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_zero_heart_rate_rejected(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 0,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_extreme_heart_rate_rejected(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 500,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_boundary_heart_rate_accepted(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 20,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+
+    def test_hrv_negative_rejected(self):
+        data = {
+            "name": "hrv",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": -10,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_hrv_zero_accepted(self):
+        data = {
+            "name": "hrv",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 0,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+
+    def test_out_of_range_min_max_skipped(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": 72,
+            "min": -10,
+            "max": 500,
+            "avg": 75,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["bpm"] == 72.0
+        assert "bpm_min" not in points[0]._fields
+        assert "bpm_max" not in points[0]._fields
+        assert points[0]._fields["bpm_avg"] == 75.0
+
+    def test_none_qty_skipped(self):
+        data = {
+            "name": "heart_rate",
+            "date": "2024-01-15T10:30:00+00:00",
+            "qty": None,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
 
 class TestActivityTransformer:
     """Tests for ActivityTransformer."""
@@ -520,6 +629,161 @@ class TestVitalsTransformer:
         points = self.transformer.transform(data)
 
         assert len(points) == 1
+
+    def test_spo2_value_check(self):
+        data = {
+            "name": "oxygen_saturation",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": 98.0,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["spo2_pct"] == 98.0
+
+    def test_spo2_decimal_to_percentage(self):
+        data = {
+            "name": "spo2",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": 0.98,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["spo2_pct"] == pytest.approx(98.0)
+
+    def test_spo2_above_100_rejected(self):
+        data = {
+            "name": "spo2",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": 150,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_spo2_negative_rejected(self):
+        data = {
+            "name": "spo2",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": -5,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_temperature_f_to_c(self):
+        data = {
+            "name": "body_temperature",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 98.6,
+            "units": "degF",
+            "source": "Thermometer",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["temp_c"] == pytest.approx(37.0, abs=0.1)
+
+    def test_temperature_c_in_range(self):
+        data = {
+            "name": "body_temperature",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 36.6,
+            "units": "degC",
+            "source": "Thermometer",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["temp_c"] == 36.6
+
+    def test_temperature_out_of_range_rejected(self):
+        data = {
+            "name": "body_temperature",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 50.0,
+            "units": "degC",
+            "source": "Thermometer",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_blood_pressure_in_range(self):
+        data = {
+            "name": "blood_pressure_systolic",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 120,
+            "source": "BPMonitor",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["bp_systolic"] == 120.0
+
+    def test_blood_pressure_out_of_range(self):
+        data = {
+            "name": "blood_pressure_systolic",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 400,
+            "source": "BPMonitor",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_respiratory_rate_in_range(self):
+        data = {
+            "name": "respiratory_rate",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 15,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["respiratory_rate"] == 15.0
+
+    def test_respiratory_rate_negative_rejected(self):
+        data = {
+            "name": "respiratory_rate",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": -3,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_vo2max_in_range(self):
+        data = {
+            "name": "vo2max",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 42.5,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["vo2max"] == 42.5
+
+    def test_vo2max_out_of_range_rejected(self):
+        data = {
+            "name": "vo2max",
+            "date": "2024-01-15T10:00:00+00:00",
+            "qty": 150,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 0
+
+    def test_spo2_min_max_decimal_converted(self):
+        data = {
+            "name": "spo2",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": 0.97,
+            "min": 0.95,
+            "max": 0.99,
+            "source": "Apple Watch",
+        }
+        points = self.transformer.transform(data)
+        assert len(points) == 1
+        assert points[0]._fields["spo2_pct"] == pytest.approx(97.0)
+        assert points[0]._fields["spo2_pct_min"] == pytest.approx(95.0)
+        assert points[0]._fields["spo2_pct_max"] == pytest.approx(99.0)
 
 
 class TestGenericTransformer:

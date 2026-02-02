@@ -194,6 +194,7 @@ class WeeklyReportGenerator:
             |> range(start: {start_date.isoformat()}, stop: {end_date.isoformat()})
             |> filter(fn: (r) => r._measurement == "heart")
             |> filter(fn: (r) => r._field == "resting_bpm" or r._field == "hrv_ms")
+            |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
         """
         try:
             tables = await query_api.query(heart_query)

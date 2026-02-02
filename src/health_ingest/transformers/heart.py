@@ -1,9 +1,14 @@
 """Heart rate and HRV transformers."""
 
+import math
+
+import structlog
 from influxdb_client import Point
 
 from ..types import JSONObject
 from .base import BaseTransformer, HealthMetric
+
+logger = structlog.get_logger(__name__)
 
 # Metrics that map to heart measurement
 HEART_METRICS = {
@@ -14,6 +19,13 @@ HEART_METRICS = {
     "heart_rate_variability": "hrv_ms",
     "heartRateVariabilitySDNN": "hrv_ms",
     "hrv": "hrv_ms",
+}
+
+# Physiological bounds per field
+_FIELD_BOUNDS: dict[str, tuple[float, float]] = {
+    "bpm": (20.0, 300.0),
+    "resting_bpm": (20.0, 200.0),
+    "hrv_ms": (0.0, 500.0),
 }
 
 
@@ -45,20 +57,45 @@ class HeartTransformer(BaseTransformer):
                 metric_name = metric.name.lower().replace(" ", "_")
                 field_name = self._lookup_field(metric_name, HEART_METRICS, default="bpm")
 
+                lo, hi = _FIELD_BOUNDS.get(field_name, (0.0, math.inf))
+                value = float(metric.qty)
+
+                if not (lo <= value <= hi):
+                    logger.warning(
+                        "heart_value_out_of_range",
+                        field=field_name,
+                        value=value,
+                        lo=lo,
+                        hi=hi,
+                    )
+                    continue
+
                 point = (
                     Point(self.measurement)
                     .tag("source", self._get_source(item))
-                    .field(field_name, float(metric.qty))
+                    .field(field_name, value)
                     .time(metric.date)
                 )
 
-                # Add min/max/avg if available
-                if metric.min is not None:
-                    point.field(f"{field_name}_min", float(metric.min))
-                if metric.max is not None:
-                    point.field(f"{field_name}_max", float(metric.max))
-                if metric.avg is not None:
-                    point.field(f"{field_name}_avg", float(metric.avg))
+                # Add min/max/avg if available and within bounds
+                for suffix, stat_val in [
+                    ("min", metric.min),
+                    ("max", metric.max),
+                    ("avg", metric.avg),
+                ]:
+                    if stat_val is not None:
+                        sv = float(stat_val)
+                        if lo <= sv <= hi:
+                            point.field(f"{field_name}_{suffix}", sv)
+                        else:
+                            logger.warning(
+                                "heart_stat_out_of_range",
+                                field=field_name,
+                                stat=suffix,
+                                value=sv,
+                                lo=lo,
+                                hi=hi,
+                            )
 
                 points.append(point)
 

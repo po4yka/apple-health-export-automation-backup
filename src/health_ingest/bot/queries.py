@@ -246,6 +246,7 @@ class BotQueryService:
                 |> range(start: {seven_days_ago.isoformat()}, stop: {now_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "heart")
                 |> filter(fn: (r) => r._field == "resting_bpm" or r._field == "hrv_ms")
+                |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
                 |> group(columns: ["_field"])
                 |> mean()
             """
@@ -362,6 +363,7 @@ class BotQueryService:
                 |> range(start: {seven_days_ago.isoformat()}, stop: {now_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "body")
                 |> filter(fn: (r) => r._field == "weight_kg")
+                |> aggregateWindow(every: 1d, fn: last, createEmpty: false)
                 |> group(columns: ["_field"])
                 |> mean()
             """
@@ -371,6 +373,7 @@ class BotQueryService:
                 |> range(start: {thirty_days_ago.isoformat()}, stop: {now_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "body")
                 |> filter(fn: (r) => r._field == "weight_kg")
+                |> aggregateWindow(every: 1d, fn: last, createEmpty: false)
                 |> group(columns: ["_field"])
                 |> mean()
             """
@@ -579,6 +582,7 @@ class BotQueryService:
                 |> range(start: {seven_days_ago.isoformat()}, stop: {now_utc.isoformat()})
                 |> filter(fn: (r) => r._measurement == "heart")
                 |> filter(fn: (r) => r._field == "resting_bpm" or r._field == "hrv_ms")
+                |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
                 |> group(columns: ["_field"])
                 |> mean()
             """
@@ -781,6 +785,7 @@ class BotQueryService:
                     |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
                     |> filter(fn: (r) => r._measurement == "heart")
                     |> filter(fn: (r) => r._field == "resting_bpm" or r._field == "hrv_ms")
+                    |> aggregateWindow(every: 1d, fn: mean, createEmpty: false)
                     |> group(columns: ["_field"])
                     |> mean()
                 """
