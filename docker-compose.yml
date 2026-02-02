@@ -94,10 +94,10 @@ services:
       - "${HTTP_PORT_EXTERNAL:-8084}:${HTTP_PORT:-8080}"
     healthcheck:
       test: ["CMD", "health-check"]
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 30s
       retries: 3
-      start_period: 60s
+      start_period: 90s
     restart: unless-stopped
     security_opt:
       - "no-new-privileges:true"
@@ -150,6 +150,7 @@ services:
       - CHOWN
       - SETUID
       - SETGID
+      - DAC_OVERRIDE
     networks:
       - health-network
     deploy:
