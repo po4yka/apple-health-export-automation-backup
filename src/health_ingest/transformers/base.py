@@ -88,9 +88,7 @@ class SleepAnalysis(BaseModel):
     def normalize_date(cls, v: Any) -> Any:
         return _normalize_date(v)
 
-    @field_validator(
-        "inBed", "asleep", "totalSleep", "deep", "rem", "core", "awake", mode="before"
-    )
+    @field_validator("inBed", "asleep", "totalSleep", "deep", "rem", "core", "awake", mode="before")
     @classmethod
     def validate_non_negative(cls, v: Any) -> Any:
         if v is not None and isinstance(v, (int, float)) and v < 0:
