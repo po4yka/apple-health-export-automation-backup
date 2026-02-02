@@ -797,6 +797,7 @@ class BotQueryService:
                     |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
                     |> filter(fn: (r) => r._measurement == "sleep")
                     |> filter(fn: (r) => r._field == "duration_min")
+                    |> aggregateWindow(every: 1d, fn: max, createEmpty: false)
                     |> group(columns: ["_field"])
                     |> mean()
                 """

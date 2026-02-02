@@ -1,5 +1,10 @@
 """Tests for health data transformers."""
 
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import ValidationError
+
 from health_ingest.transformers import (
     ActivityTransformer,
     AudioTransformer,
@@ -7,6 +12,7 @@ from health_ingest.transformers import (
     GenericTransformer,
     HeartTransformer,
     MobilityTransformer,
+    SleepAnalysis,
     SleepTransformer,
     TransformerRegistry,
     VitalsTransformer,
@@ -122,6 +128,44 @@ class TestActivityTransformer:
         assert len(points) == 2
 
 
+class TestSleepAnalysisModel:
+    """Tests for SleepAnalysis Pydantic model validation."""
+
+    def test_rejects_negative_total_sleep(self):
+        with pytest.raises(ValidationError, match="negative"):
+            SleepAnalysis.model_validate({
+                "date": "2024-01-15T07:00:00+00:00",
+                "totalSleep": -1.0,
+            })
+
+    def test_rejects_negative_in_bed(self):
+        with pytest.raises(ValidationError, match="negative"):
+            SleepAnalysis.model_validate({
+                "date": "2024-01-15T07:00:00+00:00",
+                "inBed": -5.0,
+            })
+
+    def test_accepts_zero_values(self):
+        sleep = SleepAnalysis.model_validate({
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 0.0,
+        })
+        assert sleep.totalSleep == 0.0
+
+    def test_accepts_typical_hour_values(self):
+        sleep = SleepAnalysis.model_validate({
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 7.5,
+            "inBed": 8.0,
+            "deep": 1.5,
+            "rem": 2.0,
+            "core": 3.0,
+            "awake": 0.5,
+        })
+        assert sleep.totalSleep == 7.5
+        assert sleep.deep == 1.5
+
+
 class TestSleepTransformer:
     """Tests for SleepTransformer."""
 
@@ -150,6 +194,12 @@ class TestSleepTransformer:
         assert len(points) == 1
         point = points[0]
         assert point._name == "sleep"
+        assert point._fields["duration_min"] == 420.0
+        assert point._fields["deep_min"] == 90.0
+        assert point._fields["rem_min"] == 120.0
+        assert point._fields["core_min"] == 210.0
+        assert point._fields["awake_min"] == 30.0
+        assert point._fields["in_bed_min"] == 480.0
 
     def test_sleep_quality_calculation(self):
         data = {
@@ -162,6 +212,194 @@ class TestSleepTransformer:
         points = self.transformer.transform(data)
 
         assert len(points) == 1
+        assert points[0]._fields["quality_score"] == pytest.approx(83.3, abs=0.1)
+
+    def test_hours_to_minutes_conversion(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 7.0,
+            "inBed": 8.0,
+            "deep": 1.5,
+            "units": "hr",
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["duration_min"] == 420.0
+        assert points[0]._fields["in_bed_min"] == 480.0
+        assert points[0]._fields["deep_min"] == 90.0
+
+    def test_minutes_no_conversion(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 420,
+            "inBed": 480,
+            "units": "min",
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["duration_min"] == 420.0
+
+    def test_default_units_minutes(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 420,
+            "inBed": 480,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["duration_min"] == 420.0
+
+    def test_total_sleep_precedence(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 420,
+            "asleep": 300,
+            "inBed": 480,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["duration_min"] == 420.0
+
+    def test_fallback_to_asleep(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "asleep": 360,
+            "inBed": 480,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["duration_min"] == 360.0
+
+    def test_uses_sleep_start_timestamp(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "sleepStart": "2024-01-14T23:00:00+00:00",
+            "asleep": 420,
+            "inBed": 480,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._time == datetime(2024, 1, 14, 23, 0, 0, tzinfo=UTC)
+
+    def test_falls_back_to_date_timestamp(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "asleep": 420,
+            "inBed": 480,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._time == datetime(2024, 1, 15, 7, 0, 0, tzinfo=UTC)
+
+    def test_negative_duration_rejected(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": -1.0,
+            "inBed": 480,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 0
+
+    def test_excessive_duration_rejected(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 1500,
+            "inBed": 1600,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 0
+
+    def test_quality_clamped_at_100(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "totalSleep": 500,
+            "inBed": 400,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["quality_score"] <= 100.0
+
+    def test_no_quality_when_inbed_zero(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "asleep": 420,
+            "inBed": 0,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert "quality_score" not in points[0]._fields
+
+    def test_all_none_fields_no_point(self):
+        data = {
+            "date": "2024-01-15T07:00:00+00:00",
+            "asleep": None,
+            "inBed": None,
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 0
+
+    def test_stage_hr_conversion(self):
+        data = {
+            "name": "sleep_asleep_deep",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": 1.5,
+            "units": "hr",
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 1
+        assert points[0]._fields["deep_min"] == 90.0
+
+    def test_stage_negative_rejected(self):
+        data = {
+            "name": "sleep_asleep_deep",
+            "date": "2024-01-15T03:00:00+00:00",
+            "qty": -5.0,
+            "units": "min",
+            "source": "Apple Watch",
+        }
+
+        points = self.transformer.transform(data)
+
+        assert len(points) == 0
 
 
 class TestWorkoutTransformer:

@@ -217,12 +217,13 @@ class WeeklyReportGenerator:
         except Exception as e:
             logger.warning("heart_query_failed", error=str(e))
 
-        # Fetch sleep metrics
+        # Fetch sleep metrics (max per day to pick comprehensive session, not sub-sessions)
         sleep_query = f"""
         from(bucket: "{self._influxdb_settings.bucket}")
             |> range(start: {start_date.isoformat()}, stop: {end_date.isoformat()})
             |> filter(fn: (r) => r._measurement == "sleep")
             |> filter(fn: (r) => r._field == "duration_min" or r._field == "deep_min" or r._field == "rem_min" or r._field == "quality_score")
+            |> aggregateWindow(every: 1d, fn: max, createEmpty: false)
         """
         try:
             tables = await query_api.query(sleep_query)

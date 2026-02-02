@@ -36,12 +36,32 @@ def sample_steps_data():
 
 @pytest.fixture
 def sample_sleep_data():
-    """Sample sleep analysis data."""
+    """Sample sleep analysis data matching real Health Auto Export format (hours)."""
     return {
         "date": "2024-01-15T07:00:00+00:00",
         "sleepStart": "2024-01-14T23:00:00+00:00",
         "sleepEnd": "2024-01-15T07:00:00+00:00",
-        "asleep": 420,
+        "totalSleep": 7.0,
+        "asleep": 5.5,
+        "inBed": 8.0,
+        "deep": 1.5,
+        "rem": 2.0,
+        "core": 3.5,
+        "awake": 0.5,
+        "units": "hr",
+        "source": "Apple Watch",
+    }
+
+
+@pytest.fixture
+def sample_sleep_data_minutes():
+    """Sample sleep analysis data in minutes (legacy/no-units path)."""
+    return {
+        "date": "2024-01-15T07:00:00+00:00",
+        "sleepStart": "2024-01-14T23:00:00+00:00",
+        "sleepEnd": "2024-01-15T07:00:00+00:00",
+        "totalSleep": 420,
+        "asleep": 330,
         "inBed": 480,
         "deep": 90,
         "rem": 120,
