@@ -64,7 +64,9 @@ workflows.
 | `health-check` | Verify InfluxDB connectivity and config |
 | `health-query` | Ad-hoc InfluxDB queries for health data |
 | `health-report` | Generate a weekly health report to stdout |
-| `health-report-send` | Generate and send report via Telegram |
+| `health-report-send` | Generate and send weekly report via Telegram |
+| `health-daily` | Generate a daily health report to stdout |
+| `health-daily-send` | Generate and send daily report via Telegram |
 | `health-archive` | Manage raw payload archives (stats, compress, cleanup) |
 | `health-archive-replay` | Replay archived payloads by date range |
 | `health-dlq-inspect` | Inspect dead-letter queue entries |
