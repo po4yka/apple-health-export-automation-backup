@@ -158,6 +158,10 @@ class BotDispatcher:
 
         return formatted
 
+    async def fetch_context_snapshot(self) -> dict[str, float | int | None]:
+        """Fetch compact context data for LLM injection (delegates to query service)."""
+        return await self._query_service.fetch_context_snapshot()
+
     async def _send_response(self, text: str, user_id: int) -> None:
         """Send response text to user via OpenClaw."""
         if not self._openclaw_settings.hooks_token:

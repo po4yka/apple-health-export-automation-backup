@@ -58,6 +58,7 @@ services:
       - APP_LOG_FORMAT=${APP_LOG_FORMAT:-json}
       - APP_DEFAULT_SOURCE=${APP_DEFAULT_SOURCE:-health_auto_export}
       - APP_PROMETHEUS_PORT=${APP_PROMETHEUS_PORT:-9090}
+      - APP_PROMETHEUS_HOST=${APP_PROMETHEUS_HOST:-0.0.0.0}
       # Archive settings - raw payload persistence
       - ARCHIVE_ENABLED=${ARCHIVE_ENABLED:-true}
       - ARCHIVE_DIR=/data/archive
