@@ -1,0 +1,15 @@
+FROM influxdb:2.7
+
+# Install basic tools for backup script
+RUN apt-get update && apt-get install -y 
+    tar 
+    gzip 
+    findutils 
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY scripts/backup.sh .
+RUN chmod +x backup.sh
+
+# Run the backup script in a loop
+CMD ["/bin/bash", "-c", "while true; do ./backup.sh; echo 'Sleeping for 24h...'; sleep 86400; done"]
