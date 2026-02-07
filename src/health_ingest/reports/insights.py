@@ -8,6 +8,7 @@ import openai
 import structlog
 from openai import OpenAI
 
+from ..circuit_breaker import CircuitBreaker, CircuitOpenError
 from ..config import AnthropicSettings, GrokSettings, InsightSettings, OpenAISettings
 from .models import InsightResult, PrivacySafeDailyMetrics, PrivacySafeMetrics
 from .rules import RuleEngine
@@ -108,6 +109,11 @@ class InsightEngine:
         self._grok_settings = grok_settings or GrokSettings()
         self._insight_settings = insight_settings
         self._rule_engine = RuleEngine()
+        self._circuit_breaker = CircuitBreaker(
+            name="ai_insights",
+            failure_threshold=5,
+            recovery_timeout=60.0,
+        )
 
     async def generate(
         self,
@@ -132,64 +138,83 @@ class InsightEngine:
         # Try AI first if configured and preferred
         provider = self._insight_settings.ai_provider
         if self._insight_settings.prefer_ai and self._provider_configured(provider):
-            if provider == "anthropic":
-                try:
-                    insights = await self._generate_ai_insights(
-                        metrics,
-                        provider,
-                        prompt_template,
-                        max_insights,
-                    )
-                    if insights:
-                        logger.info("insights_generated", source="ai", count=len(insights))
-                        return insights
-                except anthropic.APIConnectionError as e:
-                    logger.warning("ai_connection_error", error=str(e))
-                except anthropic.RateLimitError as e:
-                    logger.warning("ai_rate_limit", error=str(e))
-                except anthropic.APIStatusError as e:
-                    logger.warning("ai_api_error", status=e.status_code, error=str(e))
-                except anthropic.APITimeoutError as e:
-                    logger.warning(
-                        "ai_timeout",
-                        error=str(e),
-                        timeout=self._insight_settings.ai_timeout_seconds,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "ai_unexpected_error",
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
+            if self._circuit_breaker.is_open:
+                logger.warning("ai_circuit_open_fallback_to_rules")
             else:
-                try:
-                    insights = await self._generate_ai_insights(
-                        metrics,
-                        provider,
-                        prompt_template,
-                        max_insights,
-                    )
-                    if insights:
-                        logger.info("insights_generated", source="ai", count=len(insights))
-                        return insights
-                except openai.APIConnectionError as e:
-                    logger.warning("ai_connection_error", error=str(e))
-                except openai.RateLimitError as e:
-                    logger.warning("ai_rate_limit", error=str(e))
-                except openai.APIStatusError as e:
-                    logger.warning("ai_api_error", status=e.status_code, error=str(e))
-                except openai.APITimeoutError as e:
-                    logger.warning(
-                        "ai_timeout",
-                        error=str(e),
-                        timeout=self._insight_settings.ai_timeout_seconds,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "ai_unexpected_error",
-                        error=str(e),
-                        error_type=type(e).__name__,
-                    )
+                if provider == "anthropic":
+                    try:
+                        insights = await self._generate_ai_insights(
+                            metrics,
+                            provider,
+                            prompt_template,
+                            max_insights,
+                        )
+                        if insights:
+                            self._circuit_breaker.record_success()
+                            logger.info("insights_generated", source="ai", count=len(insights))
+                            return insights
+                    except anthropic.APIConnectionError as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning("ai_connection_error", error=str(e))
+                    except anthropic.RateLimitError as e:
+                        # Rate limits might be temporary, but if persistent, trip breaker
+                        self._circuit_breaker.record_failure()
+                        logger.warning("ai_rate_limit", error=str(e))
+                    except anthropic.APIStatusError as e:
+                        # 5xx errors should trip breaker
+                        if e.status_code >= 500:
+                            self._circuit_breaker.record_failure()
+                        logger.warning("ai_api_error", status=e.status_code, error=str(e))
+                    except anthropic.APITimeoutError as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning(
+                            "ai_timeout",
+                            error=str(e),
+                            timeout=self._insight_settings.ai_timeout_seconds,
+                        )
+                    except Exception as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning(
+                            "ai_unexpected_error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
+                else:
+                    try:
+                        insights = await self._generate_ai_insights(
+                            metrics,
+                            provider,
+                            prompt_template,
+                            max_insights,
+                        )
+                        if insights:
+                            self._circuit_breaker.record_success()
+                            logger.info("insights_generated", source="ai", count=len(insights))
+                            return insights
+                    except openai.APIConnectionError as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning("ai_connection_error", error=str(e))
+                    except openai.RateLimitError as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning("ai_rate_limit", error=str(e))
+                    except openai.APIStatusError as e:
+                        if e.status_code >= 500:
+                            self._circuit_breaker.record_failure()
+                        logger.warning("ai_api_error", status=e.status_code, error=str(e))
+                    except openai.APITimeoutError as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning(
+                            "ai_timeout",
+                            error=str(e),
+                            timeout=self._insight_settings.ai_timeout_seconds,
+                        )
+                    except Exception as e:
+                        self._circuit_breaker.record_failure()
+                        logger.warning(
+                            "ai_unexpected_error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                        )
 
         # Fall back to rule-based insights
         if isinstance(metrics, PrivacySafeDailyMetrics):

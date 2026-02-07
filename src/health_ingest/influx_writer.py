@@ -61,8 +61,8 @@ class InfluxWriter:
         self._buffer_lock = asyncio.Lock()
         self._flush_task: asyncio.Task | None = None
         self._running = False
-        self._max_retries = 3
-        self._retry_delay = 1.0  # seconds
+        self._max_retries = settings.max_retries
+        self._retry_delay = settings.retry_delay_seconds
         self._dropped_points = 0  # Counter for dropped points due to buffer overflow
         self._circuit_breaker = CircuitBreaker(
             name="influxdb",

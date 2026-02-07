@@ -160,6 +160,38 @@ services:
           memory: 768M
           cpus: "0.30"
 
+  # ---------------------------------------------------------------------------
+  # Backup Service
+  # ---------------------------------------------------------------------------
+  # Periodic backups of InfluxDB data and raw file archives.
+  health-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    container_name: health-backup
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    volumes:
+      # Read-only access to source data
+      - /mnt/nvme/health/archive:/data/archive:ro
+      - /mnt/nvme/health/dedup:/data/dedup:ro
+      - /mnt/nvme/health/dlq:/data/dlq:ro
+      # Write access to backup destination
+      - /mnt/nvme/health/backups:/backups
+    environment:
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-7}
+    restart: unless-stopped
+    networks:
+      - health-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.20"
+
 # =============================================================================
 # Networks
 # =============================================================================

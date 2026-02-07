@@ -242,35 +242,43 @@ class TestSleepAnalysisModel:
 
     def test_rejects_negative_total_sleep(self):
         with pytest.raises(ValidationError, match="negative"):
-            SleepAnalysis.model_validate({
-                "date": "2024-01-15T07:00:00+00:00",
-                "totalSleep": -1.0,
-            })
+            SleepAnalysis.model_validate(
+                {
+                    "date": "2024-01-15T07:00:00+00:00",
+                    "totalSleep": -1.0,
+                }
+            )
 
     def test_rejects_negative_in_bed(self):
         with pytest.raises(ValidationError, match="negative"):
-            SleepAnalysis.model_validate({
-                "date": "2024-01-15T07:00:00+00:00",
-                "inBed": -5.0,
-            })
+            SleepAnalysis.model_validate(
+                {
+                    "date": "2024-01-15T07:00:00+00:00",
+                    "inBed": -5.0,
+                }
+            )
 
     def test_accepts_zero_values(self):
-        sleep = SleepAnalysis.model_validate({
-            "date": "2024-01-15T07:00:00+00:00",
-            "totalSleep": 0.0,
-        })
+        sleep = SleepAnalysis.model_validate(
+            {
+                "date": "2024-01-15T07:00:00+00:00",
+                "totalSleep": 0.0,
+            }
+        )
         assert sleep.totalSleep == 0.0
 
     def test_accepts_typical_hour_values(self):
-        sleep = SleepAnalysis.model_validate({
-            "date": "2024-01-15T07:00:00+00:00",
-            "totalSleep": 7.5,
-            "inBed": 8.0,
-            "deep": 1.5,
-            "rem": 2.0,
-            "core": 3.0,
-            "awake": 0.5,
-        })
+        sleep = SleepAnalysis.model_validate(
+            {
+                "date": "2024-01-15T07:00:00+00:00",
+                "totalSleep": 7.5,
+                "inBed": 8.0,
+                "deep": 1.5,
+                "rem": 2.0,
+                "core": 3.0,
+                "awake": 0.5,
+            }
+        )
         assert sleep.totalSleep == 7.5
         assert sleep.deep == 1.5
 

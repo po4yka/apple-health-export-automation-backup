@@ -24,6 +24,8 @@ class InfluxDBSettings(BaseSettings):
     write_timeout_seconds: float = Field(
         default=10.0, description="Timeout for individual write ops"
     )
+    max_retries: int = Field(default=3, description="Maximum write retries")
+    retry_delay_seconds: float = Field(default=1.0, description="Delay between retries")
 
     @field_validator("token")
     @classmethod
