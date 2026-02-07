@@ -111,6 +111,31 @@ class RawArchiver:
 
         return archive_id
 
+    async def store(
+        self,
+        topic: str,
+        payload: bytes,
+        received_at: datetime | None = None,
+    ) -> str:
+        """Asynchronously store payload to archive (non-blocking).
+
+        Wraps store_sync in a thread executor to avoid blocking the main event loop
+        during file I/O operations.
+
+        Args:
+            topic: Message topic.
+            payload: Raw payload bytes.
+            received_at: Timestamp when message was received.
+
+        Returns:
+            Archive entry ID for correlation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(self.store_sync, topic, payload, received_at),
+        )
+
     def _decode_payload(self, payload: bytes) -> Any:
         """Decode payload, trying JSON first, then base64 for binary."""
         try:

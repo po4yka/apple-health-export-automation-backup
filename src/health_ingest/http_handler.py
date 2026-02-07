@@ -377,7 +377,7 @@ class HTTPHandler:
                 archive_id: str | None = None
                 if self._archiver:
                     try:
-                        archive_id = self._archiver.store_sync(
+                        archive_id = await self._archiver.store(
                             topic="http/ingest",
                             payload=raw_body,
                             received_at=datetime.now(),
