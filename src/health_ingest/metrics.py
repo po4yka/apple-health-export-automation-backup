@@ -126,3 +126,28 @@ ANALYSIS_QUALITY_SCORE = Histogram(
     ["request_type", "source", "provider"],
     buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
 )
+
+# -- MCP command observability --
+MCP_COMMAND_RUNS = Counter(
+    "health_ingest_mcp_command_runs_total",
+    "Total MCP command runs",
+    ["command", "status"],
+)
+MCP_COMMAND_LATENCY_SECONDS = Histogram(
+    "health_ingest_mcp_command_latency_seconds",
+    "MCP command latency",
+    ["command"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0),
+)
+MCP_COMMAND_COST_USD = Histogram(
+    "health_ingest_mcp_command_cost_usd",
+    "Estimated MCP command cost in USD",
+    ["command"],
+    buckets=(0.0, 0.0001, 0.0005, 0.001, 0.005, 0.01),
+)
+MCP_COMMAND_QUALITY_SCORE = Histogram(
+    "health_ingest_mcp_command_quality_score",
+    "Heuristic MCP command quality score (0-1)",
+    ["command"],
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
