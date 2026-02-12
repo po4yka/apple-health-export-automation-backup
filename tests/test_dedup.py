@@ -103,6 +103,37 @@ class TestDeduplicationCache:
         assert len(filtered) == 1
         assert cache.compute_key(filtered[0]) == cache.compute_key(points[1])
 
+    def test_reserve_batch_blocks_inflight_duplicates(self, cache):
+        """A reserved point is treated as duplicate until committed or released."""
+        point = create_point("heart_rate", "watch", 72.0)
+
+        first_points, first_keys = cache.reserve_batch([point])
+        second_points, second_keys = cache.reserve_batch([point])
+
+        assert len(first_points) == 1
+        assert len(first_keys) == 1
+        assert second_points == []
+        assert second_keys == []
+
+        cache.commit_batch(first_keys)
+        assert cache.is_duplicate(point) is True
+
+    def test_release_batch_allows_retry(self, cache):
+        """Released reservations can be retried and committed by a later worker."""
+        point = create_point("heart_rate", "watch", 72.0)
+
+        reserved_points, keys = cache.reserve_batch([point])
+        assert len(reserved_points) == 1
+
+        cache.release_batch(keys)
+
+        retried_points, retried_keys = cache.reserve_batch([point])
+        assert len(retried_points) == 1
+        assert len(retried_keys) == 1
+
+        cache.commit_batch(retried_keys)
+        assert cache.is_duplicate(point) is True
+
     def test_lru_eviction(self):
         """Test LRU eviction when max size is reached."""
         cache = DeduplicationCache(max_size=3)

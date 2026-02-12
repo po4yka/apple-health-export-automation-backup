@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from health_ingest.config import HTTPSettings
@@ -10,6 +11,7 @@ from health_ingest.http_handler import HTTPHandler
 
 def _make_settings(
     auth_token: str = "test-token",
+    allow_unauthenticated: bool = False,
     max_request_size: int = 10_485_760,
 ) -> HTTPSettings:
     """Create HTTPSettings isolated from env vars."""
@@ -19,17 +21,22 @@ def _make_settings(
         host="127.0.0.1",
         port=8080,
         auth_token=auth_token,
+        allow_unauthenticated=allow_unauthenticated,
         max_request_size=max_request_size,
     )
 
 
 def _make_handler(
     auth_token: str = "test-token",
+    allow_unauthenticated: bool = False,
     message_callback: AsyncMock | None = None,
 ) -> HTTPHandler:
     """Create an HTTPHandler with test settings."""
     return HTTPHandler(
-        settings=_make_settings(auth_token=auth_token),
+        settings=_make_settings(
+            auth_token=auth_token,
+            allow_unauthenticated=allow_unauthenticated,
+        ),
         message_callback=message_callback or AsyncMock(),
     )
 
@@ -149,7 +156,11 @@ class TestHTTPAuthEdgeCases:
     async def test_no_auth_token_configured_allows_all(self):
         """When auth_token is empty in settings, all requests are allowed."""
         callback = AsyncMock()
-        handler = _make_handler(auth_token="", message_callback=callback)
+        handler = _make_handler(
+            auth_token="",
+            allow_unauthenticated=True,
+            message_callback=callback,
+        )
         async with await _client_for(handler) as client:
             resp = await client.post("/ingest", json=VALID_PAYLOAD)
 
@@ -159,7 +170,11 @@ class TestHTTPAuthEdgeCases:
     async def test_no_auth_token_configured_allows_without_header(self):
         """When auth_token is empty, requests with no header are still accepted."""
         callback = AsyncMock()
-        handler = _make_handler(auth_token="", message_callback=callback)
+        handler = _make_handler(
+            auth_token="",
+            allow_unauthenticated=True,
+            message_callback=callback,
+        )
         async with await _client_for(handler) as client:
             resp = await client.post(
                 "/ingest",
@@ -168,6 +183,11 @@ class TestHTTPAuthEdgeCases:
             )
 
         assert resp.status_code == 202
+
+    async def test_empty_token_without_allow_flag_denies_requests(self):
+        """When auth_token is empty without opt-in, settings validation fails."""
+        with pytest.raises(ValueError, match="HTTP_AUTH_TOKEN is required"):
+            _make_handler(auth_token="", allow_unauthenticated=False)
 
     async def test_case_sensitive_bearer_prefix(self):
         """'bearer' (lowercase) prefix is not accepted; must be 'Bearer'."""

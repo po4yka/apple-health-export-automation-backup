@@ -50,6 +50,9 @@
 ## Security Notes
 
 - Keep `HTTP_AUTH_TOKEN` secret. Treat it like a password and rotate it if it leaks.
+- Keep `BOT_WEBHOOK_TOKEN` secret if bot endpoints are enabled.
+- `HTTP_ALLOW_UNAUTHENTICATED=true` and `BOT_ALLOW_UNAUTHENTICATED_WEBHOOK=true` are
+  development-only overrides. Do not use them in production.
 - Only expose ports (8084, 8087, 3001) to trusted networks. If you need remote access, prefer a reverse proxy or Cloudflare Tunnel with authentication.
 - Grafana and InfluxDB passwords are stored in `.env`; keep that file out of version control.
 

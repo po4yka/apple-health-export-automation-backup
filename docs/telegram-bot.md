@@ -42,6 +42,8 @@ Add to your `.env`:
 # Enable the bot webhook
 BOT_ENABLED=true
 BOT_WEBHOOK_TOKEN=<secret-token-for-webhook-auth>
+# Optional for local development only:
+# BOT_ALLOW_UNAUTHENTICATED_WEBHOOK=true
 
 # OpenClaw delivery (should already be configured for weekly reports)
 OPENCLAW_ENABLED=true

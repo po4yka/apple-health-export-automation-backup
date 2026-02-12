@@ -175,6 +175,7 @@ class HealthIngestService:
                 daily_report_callback=self._generate_daily_report,
                 bot_dispatcher=bot_dispatcher,
                 bot_webhook_token=self._settings.bot.webhook_token,
+                bot_allow_unauthenticated=self._settings.bot.allow_unauthenticated_webhook,
             )
             await self._http_handler.start()
 
@@ -218,10 +219,12 @@ class HealthIngestService:
 
         # Drain queue (with timeout), then stop workers
         if self._message_queue:
-            try:
-                await asyncio.wait_for(self._message_queue.join(), timeout=10.0)
-            except TimeoutError:
-                logger.warning("queue_drain_timeout", remaining=self._message_queue.qsize())
+            while True:
+                try:
+                    await asyncio.wait_for(self._message_queue.join(), timeout=30.0)
+                    break
+                except TimeoutError:
+                    logger.warning("queue_drain_waiting", remaining=self._message_queue.qsize())
 
         if self._worker_tasks:
             for task in self._worker_tasks:
@@ -291,6 +294,7 @@ class HealthIngestService:
             grok_settings=self._settings.grok,
             ai_provider=self._settings.insight.ai_provider,
             ai_timeout_seconds=self._settings.insight.ai_timeout_seconds,
+            insight_settings=self._settings.insight,
         )
         await generator.connect()
         try:
@@ -410,6 +414,9 @@ class HealthIngestService:
         """
         import json
 
+        reservation_keys: list[str] = []
+        committed = False
+
         try:
             if not self._transformer_registry or not self._influx_writer:
                 logger.warning("message_dropped_service_not_ready", topic=topic)
@@ -442,7 +449,7 @@ class HealthIngestService:
             # Filter duplicates
             if self._dedup_cache:
                 original_count = len(points)
-                points = self._dedup_cache.filter_duplicates(points)
+                points, reservation_keys = self._dedup_cache.reserve_batch(points)
                 filtered = original_count - len(points)
                 if filtered > 0:
                     self._duplicate_count += filtered
@@ -485,9 +492,10 @@ class HealthIngestService:
                     )
                 return
 
-            # Mark points as processed in dedup cache
-            if self._dedup_cache:
-                self._dedup_cache.mark_processed_batch(points)
+            # Mark reservations as committed only after successful write
+            if self._dedup_cache and reservation_keys:
+                self._dedup_cache.commit_batch(reservation_keys)
+                committed = True
 
             self._message_count += 1
             logger.debug(
@@ -513,6 +521,9 @@ class HealthIngestService:
                     error=e,
                     archive_id=archive_id,
                 )
+        finally:
+            if self._dedup_cache and reservation_keys and not committed:
+                self._dedup_cache.release_batch(reservation_keys)
 
     async def _periodic_checkpoint(self) -> None:
         """Periodically checkpoint dedup cache to SQLite."""

@@ -242,6 +242,10 @@ class HTTPSettings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="HTTP server bind address")
     port: int = Field(default=8080, description="HTTP server port")
     auth_token: str = Field(default="", description="Bearer token for authentication")
+    allow_unauthenticated: bool = Field(
+        default=False,
+        description="Allow unauthenticated HTTP access when auth_token is empty (dev only)",
+    )
     max_request_size: int = Field(
         default=10_485_760, description="Maximum request body size in bytes (10MB)"
     )
@@ -271,13 +275,19 @@ class HTTPSettings(BaseSettings):
     @model_validator(mode="after")
     def warn_if_no_auth_token(self) -> "HTTPSettings":
         if self.enabled and not self.auth_token:
-            import warnings
+            if self.allow_unauthenticated:
+                import warnings
 
-            warnings.warn(
-                "HTTP_AUTH_TOKEN is empty -- /ingest endpoint is unauthenticated. "
-                "Set HTTP_AUTH_TOKEN for production deployments.",
-                stacklevel=1,
-            )
+                warnings.warn(
+                    "HTTP_AUTH_TOKEN is empty and HTTP_ALLOW_UNAUTHENTICATED=true -- "
+                    "HTTP endpoints are unauthenticated (development only).",
+                    stacklevel=1,
+                )
+            else:
+                raise ValueError(
+                    "HTTP_AUTH_TOKEN is required when HTTP is enabled. "
+                    "Set HTTP_AUTH_TOKEN, or set HTTP_ALLOW_UNAUTHENTICATED=true for development."
+                )
         return self
 
 
@@ -342,6 +352,13 @@ class BotSettings(BaseSettings):
 
     enabled: bool = Field(default=False, description="Enable Telegram bot webhook")
     webhook_token: str = Field(default="", description="Bearer token for bot webhook auth")
+    allow_unauthenticated_webhook: bool = Field(
+        default=False,
+        description=(
+            "Allow unauthenticated bot webhook/command endpoints "
+            "when webhook_token is empty"
+        ),
+    )
     response_timeout_seconds: float = Field(
         default=45.0, description="Timeout for bot command processing"
     )
@@ -349,6 +366,16 @@ class BotSettings(BaseSettings):
     insight_timeout_seconds: float = Field(
         default=20.0, description="Timeout for AI insight generation"
     )
+
+    @model_validator(mode="after")
+    def validate_webhook_auth(self) -> "BotSettings":
+        if self.enabled and not self.webhook_token and not self.allow_unauthenticated_webhook:
+            raise ValueError(
+                "BOT_WEBHOOK_TOKEN is required when bot is enabled. "
+                "Set BOT_WEBHOOK_TOKEN, or set "
+                "BOT_ALLOW_UNAUTHENTICATED_WEBHOOK=true for development."
+            )
+        return self
 
 
 class Settings(BaseSettings):

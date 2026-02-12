@@ -108,6 +108,7 @@ class RawArchiver:
                 archive_id=archive_id,
                 error=str(e),
             )
+            raise
 
         return archive_id
 

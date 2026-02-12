@@ -44,16 +44,27 @@ def test_app_settings_normalize_log_fields():
 def test_http_settings_validation():
     """HTTP settings enforce valid ranges."""
     with pytest.raises(ValueError, match="Port must be between"):
-        HTTPSettings(port=0)
+        HTTPSettings(auth_token="token", port=0)
 
     with pytest.raises(ValueError, match="Max request size must be at least 1KB"):
-        HTTPSettings(max_request_size=100)
+        HTTPSettings(auth_token="token", max_request_size=100)
 
 
-def test_http_warns_when_auth_token_empty():
-    """Warning emitted when HTTP is enabled but auth_token is empty."""
-    with pytest.warns(UserWarning, match="HTTP_AUTH_TOKEN is empty"):
+def test_http_requires_auth_token_by_default():
+    """HTTP settings fail closed when auth_token is empty by default."""
+    with pytest.raises(ValueError, match="HTTP_AUTH_TOKEN is required"):
         HTTPSettings(_env_file=None, enabled=True, auth_token="")
+
+
+def test_http_warns_when_unauthenticated_mode_enabled():
+    """Warning emitted when dev-only unauthenticated mode is enabled."""
+    with pytest.warns(UserWarning, match="HTTP_ALLOW_UNAUTHENTICATED=true"):
+        HTTPSettings(
+            _env_file=None,
+            enabled=True,
+            auth_token="",
+            allow_unauthenticated=True,
+        )
 
 
 def test_http_no_warning_when_auth_token_set():

@@ -129,7 +129,24 @@ class InfluxWriter:
                 pass
 
         # 2. Final flush while still "running" so _periodic_flush guard doesn't interfere
-        await self._flush()
+        try:
+            await self._flush()
+        except Exception as e:
+            logger.error("disconnect_final_flush_failed", error=str(e))
+
+        # If points remain buffered after final flush, route them through drop handling.
+        remaining_points: list[Point] = []
+        async with self._buffer_lock:
+            if self._buffer:
+                remaining_points = self._buffer.copy()
+                self._buffer.clear()
+                INFLUX_BUFFER_SIZE.set(0)
+        if remaining_points:
+            count = len(remaining_points)
+            self._dropped_points += count
+            INFLUX_POINTS_DROPPED.labels(reason="disconnect_unflushed").inc(count)
+            await self._notify_drop(remaining_points, "disconnect_unflushed")
+            logger.warning("disconnect_dropped_unflushed_points", count=count)
 
         # 3. Now mark stopped
         self._running = False
@@ -173,6 +190,7 @@ class InfluxWriter:
 
         # Circuit breaker check — fail fast if InfluxDB is unreachable
         if self._circuit_breaker.is_open:
+            dropped_points: list[Point] = []
             # Re-add to buffer instead of dropping
             async with self._buffer_lock:
                 new_size = len(self._buffer) + len(points_to_write)
@@ -184,6 +202,7 @@ class InfluxWriter:
                     self._dropped_points += overflow
                     INFLUX_POINTS_DROPPED.labels(reason="circuit_open").inc(overflow)
                     combined = points_to_write + self._buffer
+                    dropped_points = combined[:overflow]
                     self._buffer = combined[-MAX_BUFFER_SIZE:]
                     INFLUX_BUFFER_SIZE.set(len(self._buffer))
             logger.warning(
@@ -191,6 +210,8 @@ class InfluxWriter:
                 count=len(points_to_write),
                 state=self._circuit_breaker.state.value,
             )
+            if dropped_points:
+                await self._notify_drop(dropped_points, "circuit_open_overflow")
             return
 
         # Retry logic with error type differentiation
@@ -264,6 +285,7 @@ class InfluxWriter:
             count=len(points_to_write),
         )
         async with self._buffer_lock:
+            dropped_points: list[Point] = []
             new_size = len(self._buffer) + len(points_to_write)
             if new_size <= MAX_BUFFER_SIZE:
                 self._buffer = points_to_write + self._buffer
@@ -286,8 +308,11 @@ class InfluxWriter:
                 )
                 # Keep only newest points up to max buffer size
                 combined = points_to_write + self._buffer
+                dropped_points = combined[:overflow]
                 self._buffer = combined[-MAX_BUFFER_SIZE:]
                 INFLUX_BUFFER_SIZE.set(len(self._buffer))
+        if dropped_points:
+            await self._notify_drop(dropped_points, "buffer_overflow")
 
     async def _notify_drop(self, points: list[Point], reason: str) -> None:
         """Invoke the on_drop callback if configured."""

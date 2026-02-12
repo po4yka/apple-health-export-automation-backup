@@ -13,6 +13,7 @@ from health_ingest.http_handler import HTTPHandler
 
 def _make_settings(
     auth_token: str = "test-token",
+    allow_unauthenticated: bool = False,
     max_request_size: int = 10_485_760,
     rate_limit_per_minute: int = 0,
     rate_limit_burst: int = 20,
@@ -24,6 +25,7 @@ def _make_settings(
         host="127.0.0.1",
         port=8080,
         auth_token=auth_token,
+        allow_unauthenticated=allow_unauthenticated,
         max_request_size=max_request_size,
         rate_limit_per_minute=rate_limit_per_minute,
         rate_limit_burst=rate_limit_burst,
@@ -32,6 +34,7 @@ def _make_settings(
 
 def _make_handler(
     auth_token: str = "test-token",
+    allow_unauthenticated: bool = False,
     max_request_size: int = 10_485_760,
     message_callback: AsyncMock | None = None,
     status_provider: Callable[[], dict[str, object]] | None = None,
@@ -44,6 +47,7 @@ def _make_handler(
     return HTTPHandler(
         settings=_make_settings(
             auth_token=auth_token,
+            allow_unauthenticated=allow_unauthenticated,
             max_request_size=max_request_size,
             rate_limit_per_minute=rate_limit_per_minute,
             rate_limit_burst=rate_limit_burst,
@@ -118,7 +122,11 @@ class TestHTTPIngestEndpoint:
     async def test_no_auth_token_configured_allows_all(self):
         """POST /ingest with empty auth_token config allows all requests."""
         callback = AsyncMock()
-        handler = _make_handler(auth_token="", message_callback=callback)
+        handler = _make_handler(
+            auth_token="",
+            allow_unauthenticated=True,
+            message_callback=callback,
+        )
         async with await _client_for(handler) as client:
             resp = await client.post("/ingest", json={"data": []})
 
@@ -159,6 +167,24 @@ class TestHTTPIngestEndpoint:
             )
 
         assert resp.status_code == 413
+
+    @pytest.mark.asyncio
+    async def test_invalid_content_length_returns_400(self):
+        """POST /ingest with malformed Content-Length returns 400."""
+        handler = _make_handler()
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/ingest",
+                content=b'{"data": []}',
+                headers={
+                    "Authorization": "Bearer test-token",
+                    "Content-Type": "application/json",
+                    "Content-Length": "abc",
+                },
+            )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "Invalid Content-Length header"
 
     @pytest.mark.asyncio
     async def test_callback_error_returns_500(self):
@@ -356,11 +382,11 @@ class TestHTTPSettings:
     """Tests for HTTPSettings configuration."""
 
     def test_defaults(self):
-        settings = HTTPSettings(_env_file=None)
+        settings = HTTPSettings(_env_file=None, auth_token="token")
         assert settings.enabled is True
         assert settings.host == "0.0.0.0"
         assert settings.port == 8080
-        assert settings.auth_token == ""
+        assert settings.auth_token == "token"
         assert settings.max_request_size == 10_485_760
 
     def test_custom_values(self):
@@ -378,11 +404,11 @@ class TestHTTPSettings:
 
     def test_invalid_port(self):
         with pytest.raises(ValueError, match="Port must be between"):
-            HTTPSettings(_env_file=None, port=0)
+            HTTPSettings(_env_file=None, auth_token="token", port=0)
 
     def test_max_request_size_too_small(self):
         with pytest.raises(ValueError, match="at least 1KB"):
-            HTTPSettings(_env_file=None, max_request_size=100)
+            HTTPSettings(_env_file=None, auth_token="token", max_request_size=100)
 
 
 class TestTimingSafeAuth:

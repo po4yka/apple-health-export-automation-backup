@@ -382,10 +382,10 @@ class TestDailyReportGenerator:
         )
 
         # Mock the influx client
-        mock_query_api = AsyncMock()
+        mock_query_api = MagicMock()
         mock_query_api.query = AsyncMock(return_value=[])
 
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.query_api.return_value = mock_query_api
         generator._influx_client = mock_client
 
@@ -422,10 +422,10 @@ class TestDailyReportGenerator:
             ai_provider="anthropic",
         )
 
-        mock_query_api = AsyncMock()
+        mock_query_api = MagicMock()
         mock_query_api.query = AsyncMock(return_value=[])
 
-        mock_client = AsyncMock()
+        mock_client = MagicMock()
         mock_client.query_api.return_value = mock_query_api
         generator._influx_client = mock_client
 

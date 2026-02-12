@@ -6,6 +6,7 @@ import pytest
 from influxdb_client import Point
 
 import health_ingest.influx_writer as influx_writer
+from health_ingest.circuit_breaker import CircuitState
 from health_ingest.config import InfluxDBSettings
 from health_ingest.influx_writer import InfluxWriter
 
@@ -144,3 +145,54 @@ async def test_graceful_shutdown_flushes_while_running(monkeypatch):
 
     assert running_during_flush == [True]
     assert writer._running is False
+
+
+@pytest.mark.asyncio
+async def test_circuit_open_overflow_invokes_on_drop(monkeypatch):
+    """Overflow while circuit is open routes dropped points via on_drop callback."""
+    monkeypatch.setattr(influx_writer, "MAX_BUFFER_SIZE", 3)
+    dropped: list[tuple[list[Point], str]] = []
+
+    async def on_drop(points, reason):
+        dropped.append((points, reason))
+
+    settings = InfluxDBSettings(token="test-token", batch_size=1)
+    writer = InfluxWriter(settings, on_drop=on_drop)
+    writer._running = True
+    writer._circuit_breaker._state = CircuitState.OPEN
+    writer._circuit_breaker._last_failure_time = 9_999_999_999.0
+
+    points = [Point("m").field("v", i) for i in range(5)]
+    await writer.write(points)
+
+    assert len(writer._buffer) == 3
+    assert len(dropped) == 1
+    assert dropped[0][1] == "circuit_open_overflow"
+    assert len(dropped[0][0]) == 2
+
+
+@pytest.mark.asyncio
+async def test_disconnect_routes_unflushed_points_to_on_drop():
+    """disconnect() routes any remaining buffered points through on_drop."""
+    dropped: list[tuple[list[Point], str]] = []
+
+    async def on_drop(points, reason):
+        dropped.append((points, reason))
+
+    settings = InfluxDBSettings(token="test-token")
+    writer = InfluxWriter(settings, on_drop=on_drop)
+    writer._running = True
+    writer._circuit_breaker._state = CircuitState.OPEN
+    writer._circuit_breaker._last_failure_time = 9_999_999_999.0
+
+    async with writer._buffer_lock:
+        writer._buffer = [Point("m").field("v", 1), Point("m").field("v", 2)]
+
+    await writer.disconnect()
+
+    assert writer._running is False
+    async with writer._buffer_lock:
+        assert writer._buffer == []
+    assert len(dropped) == 1
+    assert dropped[0][1] == "disconnect_unflushed"
+    assert len(dropped[0][0]) == 2

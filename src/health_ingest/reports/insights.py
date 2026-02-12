@@ -8,7 +8,7 @@ import openai
 import structlog
 from openai import OpenAI
 
-from ..circuit_breaker import CircuitBreaker, CircuitOpenError
+from ..circuit_breaker import CircuitBreaker
 from ..config import AnthropicSettings, GrokSettings, InsightSettings, OpenAISettings
 from .models import InsightResult, PrivacySafeDailyMetrics, PrivacySafeMetrics
 from .rules import RuleEngine

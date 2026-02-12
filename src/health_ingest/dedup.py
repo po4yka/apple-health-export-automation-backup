@@ -39,6 +39,9 @@ class DeduplicationCache:
         self._persist_path = Path(persist_path) if persist_path else None
         self._ttl_seconds = ttl_hours * 3600
         self._cache: OrderedDict[str, float] = OrderedDict()  # key -> timestamp
+        self._pending: OrderedDict[str, float] = OrderedDict()  # key -> reservation timestamp
+        # Keep reservation timeout short to avoid indefinitely blocking keys if a worker dies.
+        self._pending_ttl_seconds = min(300.0, max(60.0, self._ttl_seconds))
         self._lock = threading.Lock()
         self._db: sqlite3.Connection | None = None
         self._hits = 0
@@ -103,6 +106,8 @@ class DeduplicationCache:
 
         # Lock protects TTL check + cache mutation as an atomic unit.
         with self._lock:
+            self._cleanup_pending_locked(now)
+
             if key in self._cache:
                 ts = self._cache[key]
                 # Check if entry has expired
@@ -114,8 +119,85 @@ class DeduplicationCache:
                 # Expired - remove and treat as new
                 del self._cache[key]
 
+            if key in self._pending:
+                self._hits += 1
+                self._pending.move_to_end(key)
+                return True
+
             self._misses += 1
             return False
+
+    def _cleanup_pending_locked(self, now: float) -> int:
+        """Drop stale in-flight reservations while holding _lock."""
+        removed = 0
+        stale_keys = [k for k, ts in self._pending.items() if now - ts >= self._pending_ttl_seconds]
+        for key in stale_keys:
+            del self._pending[key]
+            removed += 1
+        return removed
+
+    def reserve_batch(self, points: list[Point]) -> tuple[list[Point], list[str]]:
+        """Atomically reserve non-duplicate points for processing.
+
+        Returns:
+            Tuple of (points_to_process, reservation_keys).
+        """
+        now = time.time()
+        keyed_points = [(point, self.compute_key(point)) for point in points]
+        selected_points: list[Point] = []
+        reservation_keys: list[str] = []
+        seen_batch: set[str] = set()
+
+        with self._lock:
+            self._cleanup_pending_locked(now)
+
+            for point, key in keyed_points:
+                if key in seen_batch:
+                    self._hits += 1
+                    continue
+                seen_batch.add(key)
+
+                cache_ts = self._cache.get(key)
+                if cache_ts is not None:
+                    if now - cache_ts < self._ttl_seconds:
+                        self._hits += 1
+                        self._cache.move_to_end(key)
+                        continue
+                    del self._cache[key]
+
+                if key in self._pending:
+                    self._hits += 1
+                    self._pending.move_to_end(key)
+                    continue
+
+                self._pending[key] = now
+                selected_points.append(point)
+                reservation_keys.append(key)
+                self._misses += 1
+
+        return selected_points, reservation_keys
+
+    def commit_batch(self, reservation_keys: list[str]) -> None:
+        """Commit successfully processed reservations into the dedup cache."""
+        now = time.time()
+
+        with self._lock:
+            for key in reservation_keys:
+                self._pending.pop(key, None)
+                self._cache[key] = now
+                self._cache.move_to_end(key)
+
+            while len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
+                self._evictions += 1
+
+    def release_batch(self, reservation_keys: list[str]) -> None:
+        """Release reservations after a failed processing attempt."""
+        if not reservation_keys:
+            return
+        with self._lock:
+            for key in reservation_keys:
+                self._pending.pop(key, None)
 
     def mark_processed(self, point: Point) -> None:
         """Add point to cache.
@@ -127,6 +209,7 @@ class DeduplicationCache:
         now = time.time()
 
         with self._lock:
+            self._pending.pop(key, None)
             if key in self._cache:
                 # Update timestamp and move to end
                 self._cache[key] = now
@@ -151,6 +234,7 @@ class DeduplicationCache:
 
         with self._lock:
             for key, ts in keys:
+                self._pending.pop(key, None)
                 if key in self._cache:
                     self._cache[key] = ts
                     self._cache.move_to_end(key)
@@ -257,7 +341,7 @@ class DeduplicationCache:
             Number of entries removed.
         """
         now = time.time()
-        removed = 0
+        removed_cache = 0
 
         with self._lock:
             keys_to_remove = [
@@ -265,10 +349,17 @@ class DeduplicationCache:
             ]
             for key in keys_to_remove:
                 del self._cache[key]
-                removed += 1
+                removed_cache += 1
 
+            removed_pending = self._cleanup_pending_locked(now)
+
+        removed = removed_cache + removed_pending
         if removed > 0:
-            logger.debug("dedup_cleanup", removed=removed)
+            logger.debug(
+                "dedup_cleanup",
+                removed_cache=removed_cache,
+                removed_pending=removed_pending,
+            )
 
         return removed
 
@@ -280,6 +371,7 @@ class DeduplicationCache:
         """
         with self._lock:
             size = len(self._cache)
+            pending_size = len(self._pending)
 
         total = self._hits + self._misses
         hit_rate = (self._hits / total * 100) if total > 0 else 0.0
@@ -287,6 +379,7 @@ class DeduplicationCache:
         return {
             "size": size,
             "max_size": self._max_size,
+            "pending_size": pending_size,
             "hits": self._hits,
             "misses": self._misses,
             "hit_rate_pct": round(hit_rate, 2),
@@ -299,4 +392,5 @@ class DeduplicationCache:
         """Clear all entries from cache."""
         with self._lock:
             self._cache.clear()
+            self._pending.clear()
         logger.info("dedup_cache_cleared")

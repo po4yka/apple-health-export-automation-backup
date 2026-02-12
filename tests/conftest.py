@@ -11,6 +11,13 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 
+@pytest.fixture(autouse=True)
+def _set_default_env(monkeypatch: pytest.MonkeyPatch):
+    """Provide safe defaults for required settings in tests."""
+    monkeypatch.setenv("INFLUXDB_TOKEN", "test-token")
+    monkeypatch.setenv("HTTP_AUTH_TOKEN", "test-http-token")
+
+
 @pytest.fixture
 def sample_heart_rate_data():
     """Sample heart rate data from Health Auto Export."""

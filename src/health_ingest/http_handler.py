@@ -240,6 +240,7 @@ class HTTPHandler:
         daily_report_callback: Callable[[str, datetime | None], Awaitable[str]] | None = None,
         bot_dispatcher: BotDispatcher | None = None,
         bot_webhook_token: str = "",
+        bot_allow_unauthenticated: bool = False,
     ) -> None:
         self._settings = settings
         self._message_callback = message_callback
@@ -250,6 +251,7 @@ class HTTPHandler:
         self._daily_report_callback = daily_report_callback
         self._bot_dispatcher = bot_dispatcher
         self._bot_webhook_token = bot_webhook_token
+        self._bot_allow_unauthenticated = bot_allow_unauthenticated
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
@@ -263,7 +265,7 @@ class HTTPHandler:
     def _check_auth(self, request: Request) -> bool:
         """Validate Bearer token from Authorization header."""
         if not self._settings.auth_token:
-            return True  # No token configured = auth disabled
+            return self._settings.allow_unauthenticated
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return False
@@ -272,7 +274,7 @@ class HTTPHandler:
     def _check_bot_auth(self, request: Request) -> bool:
         """Validate Bearer token for bot webhook (separate from ingest auth)."""
         if not self._bot_webhook_token:
-            return True  # No token configured = auth disabled
+            return self._bot_allow_unauthenticated
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return False
@@ -349,13 +351,30 @@ class HTTPHandler:
                     )
 
                 content_length = request.headers.get("content-length")
-                if content_length and int(content_length) > self._settings.max_request_size:
-                    HTTP_REQUESTS_TOTAL.labels(method="POST", path="/ingest", status="413").inc()
-                    return error_response(
-                        status.HTTP_413_CONTENT_TOO_LARGE,
-                        "Request body too large",
-                        max_bytes=self._settings.max_request_size,
-                    )
+                if content_length:
+                    try:
+                        content_length_value = int(content_length)
+                    except ValueError:
+                        HTTP_REQUESTS_TOTAL.labels(
+                            method="POST",
+                            path="/ingest",
+                            status="400",
+                        ).inc()
+                        return error_response(
+                            status.HTTP_400_BAD_REQUEST,
+                            "Invalid Content-Length header",
+                        )
+                    if content_length_value > self._settings.max_request_size:
+                        HTTP_REQUESTS_TOTAL.labels(
+                            method="POST",
+                            path="/ingest",
+                            status="413",
+                        ).inc()
+                        return error_response(
+                            status.HTTP_413_CONTENT_TOO_LARGE,
+                            "Request body too large",
+                            max_bytes=self._settings.max_request_size,
+                        )
 
                 try:
                     raw_body = await request.body()

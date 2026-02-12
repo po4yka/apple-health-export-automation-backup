@@ -13,6 +13,7 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 | `HTTP_PORT` | `8080` | HTTP server port (inside container) |
 | `HTTP_PORT_EXTERNAL` | `8084` | Host port mapped to HTTP_PORT |
 | `HTTP_AUTH_TOKEN` | - | Bearer token for HTTP authentication |
+| `HTTP_ALLOW_UNAUTHENTICATED` | `false` | Allow empty `HTTP_AUTH_TOKEN` (development only) |
 | `HTTP_MAX_REQUEST_SIZE` | `10485760` | Maximum request body size in bytes |
 
 ### InfluxDB
@@ -65,7 +66,8 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 |----------|---------|-------------|
 | `BOT_ENABLED` | `false` | Enable Telegram bot webhook endpoint |
 | `BOT_WEBHOOK_TOKEN` | - | Bearer token for bot webhook authentication |
-| `BOT_RESPONSE_TIMEOUT_SECONDS` | `15.0` | Timeout for bot command processing |
+| `BOT_ALLOW_UNAUTHENTICATED_WEBHOOK` | `false` | Allow empty `BOT_WEBHOOK_TOKEN` (development only) |
+| `BOT_RESPONSE_TIMEOUT_SECONDS` | `45.0` | Timeout for bot command processing |
 
 ### Archive
 

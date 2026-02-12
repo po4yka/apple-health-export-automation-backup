@@ -11,6 +11,7 @@ from ..config import (
     AnthropicSettings,
     GrokSettings,
     InfluxDBSettings,
+    InsightSettings,
     OpenAISettings,
     get_settings,
 )
@@ -40,13 +41,16 @@ class DailyReportGenerator:
         grok_settings: GrokSettings,
         ai_provider: str,
         ai_timeout_seconds: float = 30.0,
+        insight_settings: InsightSettings | None = None,
     ) -> None:
         self._influxdb_settings = influxdb_settings
         self._anthropic_settings = anthropic_settings
         self._openai_settings = openai_settings
         self._grok_settings = grok_settings
-        self._ai_provider = ai_provider
-        self._ai_timeout_seconds = ai_timeout_seconds
+        self._insight_settings = insight_settings or InsightSettings(
+            ai_provider=ai_provider,
+            ai_timeout_seconds=ai_timeout_seconds,
+        )
         self._influx_client: InfluxDBClientAsync | None = None
 
     async def connect(self) -> None:
@@ -92,12 +96,11 @@ class DailyReportGenerator:
         privacy_safe = self._to_privacy_safe(raw_metrics, mode)
 
         # Generate insights
-        insight_settings = get_settings().insight
         engine = InsightEngine(
             anthropic_settings=self._anthropic_settings,
             openai_settings=self._openai_settings,
             grok_settings=self._grok_settings,
-            insight_settings=insight_settings,
+            insight_settings=self._insight_settings,
         )
 
         prompt = DAILY_MORNING_PROMPT if mode == SummaryMode.MORNING else DAILY_EVENING_PROMPT
@@ -522,6 +525,7 @@ async def generate_and_send_daily(
         grok_settings=settings.grok,
         ai_provider=settings.insight.ai_provider,
         ai_timeout_seconds=settings.insight.ai_timeout_seconds,
+        insight_settings=settings.insight,
     )
 
     await generator.connect()
@@ -593,6 +597,7 @@ def run_daily_report() -> None:
         grok_settings=settings.grok,
         ai_provider=settings.insight.ai_provider,
         ai_timeout_seconds=settings.insight.ai_timeout_seconds,
+        insight_settings=settings.insight,
     )
 
     async def _run():

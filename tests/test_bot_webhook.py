@@ -13,6 +13,7 @@ def _make_handler(
     auth_token: str = "test-token",
     bot_dispatcher: object | None = None,
     bot_webhook_token: str = "test-bot-token",
+    bot_allow_unauthenticated: bool = False,
 ) -> HTTPHandler:
     settings = HTTPSettings(
         _env_file=None,
@@ -26,6 +27,7 @@ def _make_handler(
         message_callback=AsyncMock(),
         bot_dispatcher=bot_dispatcher,
         bot_webhook_token=bot_webhook_token,
+        bot_allow_unauthenticated=bot_allow_unauthenticated,
     )
 
 
@@ -97,7 +99,11 @@ class TestBotWebhookEndpoint:
     async def test_no_auth_configured_allows_all(self):
         mock_dispatcher = MagicMock()
         mock_dispatcher.handle_webhook = AsyncMock(return_value={"status": "ok"})
-        handler = _make_handler(bot_dispatcher=mock_dispatcher, bot_webhook_token="")
+        handler = _make_handler(
+            bot_dispatcher=mock_dispatcher,
+            bot_webhook_token="",
+            bot_allow_unauthenticated=True,
+        )
 
         async with await _client_for(handler) as client:
             resp = await client.post(
@@ -107,6 +113,19 @@ class TestBotWebhookEndpoint:
 
         assert resp.status_code == 202
         await asyncio.sleep(0.05)
+
+    async def test_no_webhook_token_without_allow_flag_returns_401(self):
+        mock_dispatcher = MagicMock()
+        mock_dispatcher.handle_webhook = AsyncMock(return_value={"status": "ok"})
+        handler = _make_handler(bot_dispatcher=mock_dispatcher, bot_webhook_token="")
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/webhook",
+                json={"message": "/health_help", "user_id": 999},
+            )
+
+        assert resp.status_code == 401
 
     async def test_missing_required_fields_returns_422(self):
         mock_dispatcher = MagicMock()
@@ -205,7 +224,11 @@ class TestBotCommandEndpoint:
     async def test_no_auth_configured_allows_all(self):
         mock_dispatcher = MagicMock()
         mock_dispatcher.process_command = AsyncMock(return_value="OK")
-        handler = _make_handler(bot_dispatcher=mock_dispatcher, bot_webhook_token="")
+        handler = _make_handler(
+            bot_dispatcher=mock_dispatcher,
+            bot_webhook_token="",
+            bot_allow_unauthenticated=True,
+        )
 
         async with await _client_for(handler) as client:
             resp = await client.post(
@@ -215,6 +238,19 @@ class TestBotCommandEndpoint:
 
         assert resp.status_code == 200
         assert resp.json()["text"] == "OK"
+
+    async def test_no_bot_token_without_allow_flag_returns_401(self):
+        mock_dispatcher = MagicMock()
+        mock_dispatcher.process_command = AsyncMock(return_value="OK")
+        handler = _make_handler(bot_dispatcher=mock_dispatcher, bot_webhook_token="")
+
+        async with await _client_for(handler) as client:
+            resp = await client.post(
+                "/bot/command",
+                json={"message": "/health_help"},
+            )
+
+        assert resp.status_code == 401
 
     async def test_dispatcher_exception_returns_500(self):
         mock_dispatcher = MagicMock()

@@ -180,3 +180,15 @@ class TestArchivePathSafety:
             entry = json.loads(f.readline())
 
         assert entry["ts"] == now.isoformat()
+
+    def test_store_sync_raises_when_write_fails(self, tmp_path: Path, monkeypatch):
+        """store_sync propagates write errors so callers can react safely."""
+        archiver = RawArchiver(tmp_path)
+
+        def fail_open(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("builtins.open", fail_open)
+
+        with pytest.raises(OSError, match="disk full"):
+            archiver.store_sync("topic", b'{"test": true}')
