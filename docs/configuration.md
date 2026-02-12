@@ -107,6 +107,12 @@ The full configuration lives in `.env`. Start by copying `.env.example` and fill
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
 | `OTEL_SERVICE_NAME` | `health-ingest` | Service name for traces |
 
+### MCP Tooling (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | - | Optional token if you add an external GitHub MCP server in your local `.mcp.json` |
+
 ### DLQ Categories
 
 - `json_parse_error`

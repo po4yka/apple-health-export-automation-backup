@@ -8,6 +8,7 @@ A self-hosted system to backup, store, and analyze Apple Health data exported fr
 - **Time-Series Storage** -- InfluxDB 2.x with structured measurements for heart, activity, sleep, workouts, body, vitals, mobility, and audio
 - **Rich Dashboards** -- pre-configured Grafana dashboards for all metric types
 - **AI-Powered Insights** -- weekly health reports via Anthropic, OpenAI, or Grok
+- **MCP Interface** -- first-class MCP tools for health status, report generation, and delivery
 - **Telegram Bot** -- on-demand health queries ([details](docs/telegram-bot.md))
 - **Docker Deployment** -- single command with Docker Compose
 - **Extensible Transformers** -- modular architecture for adding new health metric types
@@ -98,6 +99,7 @@ See [iOS App Setup](docs/ios-app-setup.md) for Health Auto Export configuration.
 | `health-report-send` | Generate and send weekly report via Telegram (`--infographic-out ./weekly.svg` exports an SVG infographic) |
 | `health-daily` | Generate a daily health report to stdout (`morning/evening`; `--infographic-out ./daily.svg` exports an SVG infographic) |
 | `health-daily-send` | Generate and send daily report via Telegram (`--infographic-out ./daily.svg` exports an SVG infographic) |
+| `health-mcp` | Run MCP server (`stdio`) for Claude Code/OpenClaw integrations |
 | `health-archive` | Manage raw payload archives (stats, compress, cleanup) |
 | `health-archive-replay` | Replay archived payloads by date range |
 | `health-dlq-inspect` | Inspect dead-letter queue entries |
@@ -132,6 +134,7 @@ See [Development Guide](docs/development.md) for local API testing, coverage, an
 | [iOS App Setup](docs/ios-app-setup.md) | Health Auto Export app configuration |
 | [Telegram Bot](docs/telegram-bot.md) | Bot commands, setup, and troubleshooting |
 | [Data Model](docs/data-model.md) | InfluxDB schema reference |
+| [MCP](docs/mcp.md) | MCP setup, tools, and security guidance |
 
 ## License
 

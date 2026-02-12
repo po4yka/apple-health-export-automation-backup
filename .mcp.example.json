@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "health_pipeline": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "health-mcp"
+      ]
+    }
+  }
+}

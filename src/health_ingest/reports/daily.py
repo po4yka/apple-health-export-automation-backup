@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,6 +33,18 @@ from .visualization import DailyInfographicRenderer
 logger = structlog.get_logger(__name__)
 
 TZ_TBILISI = timezone(timedelta(hours=4))
+
+
+@dataclass
+class DailyReportBundle:
+    """Generated daily report payload for API/CLI/MCP consumption."""
+
+    mode: SummaryMode
+    report: str
+    reference_time: datetime
+    insight_count: int
+    insight_source: str
+    infographic_path: str | None = None
 
 
 class DailyReportGenerator:
@@ -559,8 +572,63 @@ async def generate_and_send_daily(
     Returns:
         DeliveryResult if sent, None if dry_run or delivery disabled.
     """
-    settings = get_settings()
+    bundle = await generate_daily_report_bundle(
+        mode=mode,
+        reference_time=None,
+        infographic_out=infographic_out,
+    )
+    report = bundle.report
 
+    if stdout:
+        print(report)
+        print("\n" + "=" * 50)
+        print(f"Report length: {len(report)} characters")
+        if bundle.infographic_path:
+            print(f"Infographic: {Path(bundle.infographic_path).resolve()}")
+
+    if dry_run:
+        logger.info("daily_dry_run_complete", mode=mode.value, report_length=len(report))
+        return None
+
+    settings = get_settings()
+    # Send via OpenClaw
+    if settings.openclaw.enabled and settings.openclaw.hooks_token:
+        delivery = OpenClawDelivery(settings.openclaw)
+        date_str = bundle.reference_time.strftime("%Y-%m-%d")
+        session_key = f"health-daily-{mode.value}:{date_str}"
+        delivery_name = (
+            "Morning Health Summary" if mode == SummaryMode.MORNING else "Evening Health Recap"
+        )
+
+        # Override delivery payload name and session key
+        payload = {
+            "message": report,
+            "channel": "telegram",
+            "to": str(settings.openclaw.telegram_user_id),
+            "deliver": True,
+            "name": delivery_name,
+            "sessionKey": session_key,
+        }
+        result = await delivery._send_with_retries(payload)
+
+        if result.success:
+            logger.info("daily_report_delivered", mode=mode.value, run_id=result.run_id)
+        else:
+            logger.error("daily_report_delivery_failed", mode=mode.value, error=result.error)
+
+        return result
+    else:
+        logger.warning("openclaw_not_configured")
+        return None
+
+
+async def generate_daily_report_bundle(
+    mode: SummaryMode,
+    reference_time: datetime | None = None,
+    infographic_out: str | None = None,
+) -> DailyReportBundle:
+    """Generate a daily report bundle without sending it."""
+    settings = get_settings()
     generator = DailyReportGenerator(
         influxdb_settings=settings.influxdb,
         anthropic_settings=settings.anthropic,
@@ -570,68 +638,37 @@ async def generate_and_send_daily(
         ai_timeout_seconds=settings.insight.ai_timeout_seconds,
         insight_settings=settings.insight,
     )
-
     await generator.connect()
-
     try:
-        reference_time = datetime.now(TZ_TBILISI)
-        report = await generator.generate_summary(mode, reference_time)
+        effective_reference = reference_time or datetime.now(TZ_TBILISI)
+        report = await generator.generate_summary(mode, effective_reference)
+
+        infographic_path: str | None = None
         if infographic_out and generator.last_metrics is not None:
             renderer = DailyInfographicRenderer()
             svg = renderer.render(
                 metrics=generator.last_metrics,
                 insights=generator.last_insights,
-                reference_time=generator.last_reference_time or reference_time,
+                reference_time=generator.last_reference_time or effective_reference,
                 analysis_provenance=generator.last_analysis_provenance,
             )
             output_path = renderer.write_svg(svg, infographic_out)
+            infographic_path = str(output_path)
             logger.info(
                 "daily_infographic_exported",
                 mode=mode.value,
-                path=str(output_path),
+                path=infographic_path,
             )
 
-        if stdout:
-            print(report)
-            print("\n" + "=" * 50)
-            print(f"Report length: {len(report)} characters")
-            if infographic_out:
-                print(f"Infographic: {Path(infographic_out).resolve()}")
-
-        if dry_run:
-            logger.info("daily_dry_run_complete", mode=mode.value, report_length=len(report))
-            return None
-
-        # Send via OpenClaw
-        if settings.openclaw.enabled and settings.openclaw.hooks_token:
-            delivery = OpenClawDelivery(settings.openclaw)
-            date_str = reference_time.strftime("%Y-%m-%d")
-            session_key = f"health-daily-{mode.value}:{date_str}"
-            delivery_name = (
-                "Morning Health Summary" if mode == SummaryMode.MORNING else "Evening Health Recap"
-            )
-
-            # Override delivery payload name and session key
-            payload = {
-                "message": report,
-                "channel": "telegram",
-                "to": str(settings.openclaw.telegram_user_id),
-                "deliver": True,
-                "name": delivery_name,
-                "sessionKey": session_key,
-            }
-            result = await delivery._send_with_retries(payload)
-
-            if result.success:
-                logger.info("daily_report_delivered", mode=mode.value, run_id=result.run_id)
-            else:
-                logger.error("daily_report_delivery_failed", mode=mode.value, error=result.error)
-
-            return result
-        else:
-            logger.warning("openclaw_not_configured")
-            return None
-
+        insights = generator.last_insights
+        return DailyReportBundle(
+            mode=mode,
+            report=report,
+            reference_time=effective_reference,
+            insight_count=len(insights),
+            insight_source=insights[0].source if insights else "none",
+            infographic_path=infographic_path,
+        )
     finally:
         await generator.disconnect()
 

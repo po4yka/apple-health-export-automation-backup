@@ -66,6 +66,18 @@ class WeeklyMetrics:
     exercise_change_pct: float | None = None
 
 
+@dataclass
+class WeeklyReportBundle:
+    """Generated weekly report payload for API/CLI/MCP consumption."""
+
+    report: str
+    week_start: datetime
+    week_end: datetime
+    insight_count: int
+    insight_source: str
+    infographic_path: str | None = None
+
+
 class WeeklyReportGenerator:
     """Generates weekly health reports with AI-powered insights."""
 
@@ -625,8 +637,58 @@ async def generate_and_send_report(
     Returns:
         DeliveryResult if sent, None if dry_run or delivery disabled.
     """
-    settings = get_settings()
+    bundle = await generate_weekly_report_bundle(infographic_out=infographic_out)
+    report = bundle.report
 
+    if stdout:
+        print(report)
+        print("\n" + "=" * 50)
+        print(f"Report length: {len(report)} characters")
+        print(f"Insights source: {bundle.insight_source}")
+        if bundle.infographic_path:
+            print(f"Infographic: {Path(bundle.infographic_path).resolve()}")
+
+    if dry_run:
+        logger.info(
+            "dry_run_complete",
+            report_length=len(report),
+            insight_count=bundle.insight_count,
+            insight_source=bundle.insight_source,
+        )
+        return None
+
+    settings = get_settings()
+    # Send via OpenClaw
+    if settings.openclaw.enabled and settings.openclaw.hooks_token:
+        delivery = OpenClawDelivery(settings.openclaw)
+        week_id = bundle.week_start.strftime("%Y-W%W")
+        result = await delivery.send_report(report, week_id)
+
+        if result.success:
+            logger.info(
+                "report_delivered",
+                run_id=result.run_id,
+                attempts=result.attempt,
+            )
+        else:
+            logger.error(
+                "report_delivery_failed",
+                error=result.error,
+                attempts=result.attempt,
+            )
+
+        return result
+    else:
+        logger.warning("openclaw_not_configured")
+        return None
+
+
+async def generate_weekly_report_bundle(
+    end_date: datetime | None = None,
+    infographic_out: str | None = None,
+) -> WeeklyReportBundle:
+    """Generate a weekly report bundle without sending it."""
+    settings = get_settings()
     generator = WeeklyReportGenerator(
         influxdb_settings=settings.influxdb,
         anthropic_settings=settings.anthropic,
@@ -635,32 +697,22 @@ async def generate_and_send_report(
         ai_provider=settings.insight.ai_provider,
         ai_timeout_seconds=settings.insight.ai_timeout_seconds,
     )
-
     await generator.connect()
-
     try:
-        # Calculate date range
-        end_date = datetime.now(UTC)
-        start_date = end_date - timedelta(days=7)
+        current_end = end_date or datetime.now(UTC)
+        start_date = current_end - timedelta(days=7)
         prev_start = start_date - timedelta(days=7)
 
         logger.info(
             "generating_smart_report",
             start=start_date.isoformat(),
-            end=end_date.isoformat(),
+            end=current_end.isoformat(),
         )
-
-        # Fetch metrics for current and previous week
-        current_metrics = await generator._fetch_weekly_metrics(start_date, end_date)
+        current_metrics = await generator._fetch_weekly_metrics(start_date, current_end)
         previous_metrics = await generator._fetch_weekly_metrics(prev_start, start_date)
-
-        # Calculate week-over-week changes
         current_metrics = generator._calculate_changes(current_metrics, previous_metrics)
-
-        # Convert to privacy-safe format
         privacy_safe = convert_to_privacy_safe(current_metrics, previous_metrics)
 
-        # Generate insights using InsightEngine
         insight_engine = InsightEngine(
             anthropic_settings=settings.anthropic,
             openai_settings=settings.openai,
@@ -671,69 +723,37 @@ async def generate_and_send_report(
             privacy_safe,
             request_type=AnalysisRequestType.WEEKLY_SUMMARY,
         )
-
-        # Format for Telegram
         formatter = TelegramFormatter()
         report = formatter.format(
             metrics=privacy_safe,
             insights=insights,
             week_start=start_date,
-            week_end=end_date,
+            week_end=current_end,
             analysis_provenance=insight_engine.last_provenance,
         )
+
+        infographic_path: str | None = None
         if infographic_out:
             renderer = WeeklyInfographicRenderer()
             svg = renderer.render(
                 metrics=privacy_safe,
                 insights=insights,
                 week_start=start_date,
-                week_end=end_date,
+                week_end=current_end,
                 analysis_provenance=insight_engine.last_provenance,
             )
             output_path = renderer.write_svg(svg, infographic_out)
-            logger.info("weekly_infographic_exported", path=str(output_path))
+            infographic_path = str(output_path)
+            logger.info("weekly_infographic_exported", path=infographic_path)
 
-        if stdout:
-            print(report)
-            print("\n" + "=" * 50)
-            print(f"Report length: {len(report)} characters")
-            print(f"Insights source: {insights[0].source if insights else 'none'}")
-            if infographic_out:
-                print(f"Infographic: {Path(infographic_out).resolve()}")
-
-        if dry_run:
-            logger.info(
-                "dry_run_complete",
-                report_length=len(report),
-                insight_count=len(insights),
-                insight_source=insights[0].source if insights else "none",
-            )
-            return None
-
-        # Send via OpenClaw
-        if settings.openclaw.enabled and settings.openclaw.hooks_token:
-            delivery = OpenClawDelivery(settings.openclaw)
-            week_id = start_date.strftime("%Y-W%W")
-            result = await delivery.send_report(report, week_id)
-
-            if result.success:
-                logger.info(
-                    "report_delivered",
-                    run_id=result.run_id,
-                    attempts=result.attempt,
-                )
-            else:
-                logger.error(
-                    "report_delivery_failed",
-                    error=result.error,
-                    attempts=result.attempt,
-                )
-
-            return result
-        else:
-            logger.warning("openclaw_not_configured")
-            return None
-
+        return WeeklyReportBundle(
+            report=report,
+            week_start=start_date,
+            week_end=current_end,
+            insight_count=len(insights),
+            insight_source=insights[0].source if insights else "none",
+            infographic_path=infographic_path,
+        )
     finally:
         await generator.disconnect()
 
