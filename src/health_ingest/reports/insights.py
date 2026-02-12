@@ -1,7 +1,11 @@
 """AI insight generation with rule-based fallback."""
 
 import asyncio
+import hashlib
 import json
+import time
+from dataclasses import dataclass
+from pathlib import Path
 
 import anthropic
 import openai
@@ -10,80 +14,45 @@ from openai import OpenAI
 
 from ..circuit_breaker import CircuitBreaker
 from ..config import AnthropicSettings, GrokSettings, InsightSettings, OpenAISettings
+from .analysis_contract import (
+    AnalysisProvenance,
+    AnalysisRequestType,
+    PromptTemplate,
+    dataset_version_for_text,
+    get_analysis_profile,
+    load_prompt_template,
+)
+from .analysis_monitoring import record_analysis_observation
 from .models import InsightResult, PrivacySafeDailyMetrics, PrivacySafeMetrics
 from .rules import RuleEngine
 
 logger = structlog.get_logger(__name__)
 
-# AI prompt for structured insight generation
-INSIGHT_PROMPT = """You are a health insights analyst. Analyze these AGGREGATED weekly \
-health metrics and provide personalized insights with clear reasoning.
+INSIGHT_PROMPT = load_prompt_template("weekly_insight").text
+DAILY_MORNING_PROMPT = load_prompt_template("daily_morning").text
+DAILY_EVENING_PROMPT = load_prompt_template("daily_evening").text
 
-IMPORTANT: These are pre-aggregated summaries only - no raw data or timestamps. \
-Focus on trends, patterns, and actionable recommendations.
+_PRICING_USD_PER_MILLION: dict[str, tuple[float, float]] = {
+    "claude-sonnet-4": (3.0, 15.0),
+    "gpt-4o-mini": (0.15, 0.6),
+    "gpt-4o": (2.5, 10.0),
+    "grok-2": (2.0, 10.0),
+}
+_DEFAULT_PROVIDER_PRICING_USD_PER_MILLION: dict[str, tuple[float, float]] = {
+    "anthropic": (3.0, 15.0),
+    "openai": (1.0, 4.0),
+    "grok": (2.0, 10.0),
+}
 
-WEEKLY METRICS:
-{metrics_text}
 
-Generate {max_insights} health insights. For each insight, provide:
-1. category: One of "activity", "heart", "sleep", "workouts", "body", or "correlation"
-2. headline: A concise summary (max 60 characters)
-3. reasoning: WHY this insight matters, referencing specific numbers from the metrics
-4. recommendation: One specific, actionable suggestion for the coming week
-
-Focus on:
-- Celebrating achievements and positive trends
-- Flagging concerning patterns that need attention
-- Cross-metric correlations (e.g., how sleep affects HRV)
-- Practical, achievable recommendations
-
-Return your response as a JSON array of objects with these exact fields: \
-category, headline, reasoning, recommendation.
-Example format:
-[
-  {{"category": "activity", "headline": "Step goal achieved", \
-"reasoning": "Averaged 10,500 steps/day...", "recommendation": "Try adding..."}}
-]
-
-Only return the JSON array, no other text."""
-
-DAILY_MORNING_PROMPT = """You are a personal health coach providing a brief morning briefing. \
-Analyze these health metrics from last night's sleep and recent vitals.
-
-IMPORTANT: Keep it concise — 2-3 short insights maximum. Focus on sleep recovery and \
-setting up a good day.
-
-TODAY'S METRICS:
-{metrics_text}
-
-Generate {max_insights} health insights. For each insight, provide:
-1. category: One of "sleep", "heart", "activity", "workouts"
-2. headline: A concise summary (max 60 characters)
-3. reasoning: Brief explanation referencing specific numbers
-4. recommendation: One specific tip for today
-
-Return your response as a JSON array of objects with these exact fields: \
-category, headline, reasoning, recommendation.
-Only return the JSON array, no other text."""
-
-DAILY_EVENING_PROMPT = """You are a personal health coach providing an evening recap. \
-Analyze today's activity, workouts, and vitals.
-
-IMPORTANT: Keep it concise — 2-3 short insights maximum. Focus on today's achievements \
-and recovery suggestions for tonight.
-
-TODAY'S METRICS:
-{metrics_text}
-
-Generate {max_insights} health insights. For each insight, provide:
-1. category: One of "activity", "heart", "workouts", "sleep"
-2. headline: A concise summary (max 60 characters)
-3. reasoning: Brief explanation referencing specific numbers
-4. recommendation: One specific suggestion for recovery tonight
-
-Return your response as a JSON array of objects with these exact fields: \
-category, headline, reasoning, recommendation.
-Only return the JSON array, no other text."""
+@dataclass(frozen=True)
+class _AIGenerationResult:
+    insights: list[InsightResult]
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    model: str
+    prompt_template: PromptTemplate
+    dataset_version: str
 
 
 class InsightEngine:
@@ -96,14 +65,6 @@ class InsightEngine:
         openai_settings: OpenAISettings | None = None,
         grok_settings: GrokSettings | None = None,
     ) -> None:
-        """Initialize the insight engine.
-
-        Args:
-            anthropic_settings: Anthropic API configuration.
-            openai_settings: OpenAI API configuration.
-            grok_settings: Grok API configuration.
-            insight_settings: Insight generation settings.
-        """
         self._anthropic_settings = anthropic_settings
         self._openai_settings = openai_settings or OpenAISettings()
         self._grok_settings = grok_settings or GrokSettings()
@@ -114,114 +75,176 @@ class InsightEngine:
             failure_threshold=5,
             recovery_timeout=60.0,
         )
+        self._last_provenance: AnalysisProvenance | None = None
+
+    @property
+    def last_provenance(self) -> AnalysisProvenance | None:
+        """Most recent run provenance."""
+        return self._last_provenance
 
     async def generate(
         self,
         metrics: PrivacySafeMetrics | PrivacySafeDailyMetrics,
         prompt_template: str | None = None,
         max_insights_override: int | None = None,
+        request_type: AnalysisRequestType = AnalysisRequestType.WEEKLY_SUMMARY,
     ) -> list[InsightResult]:
-        """Generate insights from metrics.
-
-        Uses AI when available and configured, falls back to rules otherwise.
-
-        Args:
-            metrics: Privacy-safe aggregated metrics (weekly or daily).
-            prompt_template: Optional prompt template to use instead of default.
-            max_insights_override: Optional max insights override.
-
-        Returns:
-            List of InsightResult objects.
-        """
+        """Generate insights from metrics with explicit request profile."""
+        run_start = time.perf_counter()
+        profile = get_analysis_profile(request_type)
         max_insights = max_insights_override or self._insight_settings.max_insights
-
-        # Try AI first if configured and preferred
+        prompt_tpl = self._resolve_prompt_template(profile.prompt_id, prompt_template)
+        metrics_text = metrics.to_summary_text()
+        dataset_version = dataset_version_for_text(metrics_text)
         provider = self._insight_settings.ai_provider
+        ai_attempted = False
+
         if self._insight_settings.prefer_ai and self._provider_configured(provider):
             if self._circuit_breaker.is_open:
-                logger.warning("ai_circuit_open_fallback_to_rules")
+                logger.warning("ai_circuit_open_fallback_to_rules", request_type=request_type.value)
             else:
-                if provider == "anthropic":
-                    try:
-                        insights = await self._generate_ai_insights(
-                            metrics,
-                            provider,
-                            prompt_template,
-                            max_insights,
+                ai_attempted = True
+                try:
+                    ai_result = await self._generate_ai_insights(
+                        provider=provider,
+                        metrics_text=metrics_text,
+                        prompt_template=prompt_tpl,
+                        dataset_version=dataset_version,
+                        request_type=request_type,
+                        max_insights=max_insights,
+                    )
+                    if isinstance(ai_result, list) and ai_result:
+                        self._circuit_breaker.record_success()
+                        provenance = AnalysisProvenance(
+                            request_type=request_type.value,
+                            source="ai",
+                            provider=provider,
+                            model=self._model_for_provider(provider),
+                            dataset_version=dataset_version,
+                            prompt_id=prompt_tpl.prompt_id,
+                            prompt_version=prompt_tpl.version,
+                            prompt_hash=prompt_tpl.sha256,
                         )
-                        if insights:
-                            self._circuit_breaker.record_success()
-                            logger.info("insights_generated", source="ai", count=len(insights))
-                            return insights
-                    except anthropic.APIConnectionError as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning("ai_connection_error", error=str(e))
-                    except anthropic.RateLimitError as e:
-                        # Rate limits might be temporary, but if persistent, trip breaker
-                        self._circuit_breaker.record_failure()
-                        logger.warning("ai_rate_limit", error=str(e))
-                    except anthropic.APIStatusError as e:
-                        # 5xx errors should trip breaker
-                        if e.status_code >= 500:
-                            self._circuit_breaker.record_failure()
-                        logger.warning("ai_api_error", status=e.status_code, error=str(e))
-                    except anthropic.APITimeoutError as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning(
-                            "ai_timeout",
-                            error=str(e),
-                            timeout=self._insight_settings.ai_timeout_seconds,
+                        self._last_provenance = provenance
+                        record_analysis_observation(
+                            provenance=provenance,
+                            status="success",
+                            latency_seconds=time.perf_counter() - run_start,
+                            estimated_cost_usd=0.0,
+                            quality_score=1.0,
                         )
-                    except Exception as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning(
-                            "ai_unexpected_error",
-                            error=str(e),
-                            error_type=type(e).__name__,
+                        logger.info(
+                            "insights_generated",
+                            source="ai",
+                            count=len(ai_result),
+                            request_type=request_type.value,
                         )
-                else:
-                    try:
-                        insights = await self._generate_ai_insights(
-                            metrics,
-                            provider,
-                            prompt_template,
-                            max_insights,
+                        return ai_result
+                    if ai_result.insights:
+                        self._circuit_breaker.record_success()
+                        quality_score = self._evaluate_quality(ai_result.insights, max_insights)
+                        estimated_cost = self._estimate_cost_usd(
+                            provider=provider,
+                            model=ai_result.model,
+                            prompt_tokens=ai_result.prompt_tokens,
+                            completion_tokens=ai_result.completion_tokens,
                         )
-                        if insights:
-                            self._circuit_breaker.record_success()
-                            logger.info("insights_generated", source="ai", count=len(insights))
-                            return insights
-                    except openai.APIConnectionError as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning("ai_connection_error", error=str(e))
-                    except openai.RateLimitError as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning("ai_rate_limit", error=str(e))
-                    except openai.APIStatusError as e:
-                        if e.status_code >= 500:
-                            self._circuit_breaker.record_failure()
-                        logger.warning("ai_api_error", status=e.status_code, error=str(e))
-                    except openai.APITimeoutError as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning(
-                            "ai_timeout",
-                            error=str(e),
-                            timeout=self._insight_settings.ai_timeout_seconds,
+                        provenance = AnalysisProvenance(
+                            request_type=request_type.value,
+                            source="ai",
+                            provider=provider,
+                            model=ai_result.model,
+                            dataset_version=ai_result.dataset_version,
+                            prompt_id=ai_result.prompt_template.prompt_id,
+                            prompt_version=ai_result.prompt_template.version,
+                            prompt_hash=ai_result.prompt_template.sha256,
                         )
-                    except Exception as e:
-                        self._circuit_breaker.record_failure()
-                        logger.warning(
-                            "ai_unexpected_error",
-                            error=str(e),
-                            error_type=type(e).__name__,
+                        self._last_provenance = provenance
+                        record_analysis_observation(
+                            provenance=provenance,
+                            status="success",
+                            latency_seconds=time.perf_counter() - run_start,
+                            estimated_cost_usd=estimated_cost,
+                            quality_score=quality_score,
                         )
+                        logger.info(
+                            "insights_generated",
+                            source="ai",
+                            count=len(ai_result.insights),
+                            request_type=request_type.value,
+                        )
+                        return ai_result.insights
+                except anthropic.APIConnectionError as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning("ai_connection_error", error=str(e))
+                except anthropic.RateLimitError as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning("ai_rate_limit", error=str(e))
+                except anthropic.APIStatusError as e:
+                    if e.status_code >= 500:
+                        self._circuit_breaker.record_failure()
+                    logger.warning("ai_api_error", status=e.status_code, error=str(e))
+                except anthropic.APITimeoutError as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning(
+                        "ai_timeout",
+                        error=str(e),
+                        timeout=self._insight_settings.ai_timeout_seconds,
+                    )
+                except openai.APIConnectionError as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning("ai_connection_error", error=str(e))
+                except openai.RateLimitError as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning("ai_rate_limit", error=str(e))
+                except openai.APIStatusError as e:
+                    if e.status_code >= 500:
+                        self._circuit_breaker.record_failure()
+                    logger.warning("ai_api_error", status=e.status_code, error=str(e))
+                except openai.APITimeoutError as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning(
+                        "ai_timeout",
+                        error=str(e),
+                        timeout=self._insight_settings.ai_timeout_seconds,
+                    )
+                except Exception as e:
+                    self._circuit_breaker.record_failure()
+                    logger.warning(
+                        "ai_unexpected_error",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                    )
 
-        # Fall back to rule-based insights
         if isinstance(metrics, PrivacySafeDailyMetrics):
             insights = self._generate_daily_rule_based(metrics, max_insights)
         else:
             insights = self._generate_rule_based(metrics, max_insights)
-        logger.info("insights_generated", source="rule", count=len(insights))
+
+        provenance = AnalysisProvenance(
+            request_type=request_type.value,
+            source="rule",
+            provider="rule",
+            model="rule-engine.v1",
+            dataset_version=dataset_version,
+            prompt_id=prompt_tpl.prompt_id,
+            prompt_version=prompt_tpl.version,
+            prompt_hash=prompt_tpl.sha256,
+        )
+        self._last_provenance = provenance
+        record_analysis_observation(
+            provenance=provenance,
+            status="fallback" if ai_attempted else "success",
+            latency_seconds=time.perf_counter() - run_start,
+            estimated_cost_usd=0.0,
+            quality_score=self._evaluate_quality(insights, max_insights),
+        )
+        logger.info(
+            "insights_generated",
+            source="rule",
+            count=len(insights),
+            request_type=request_type.value,
+        )
         return insights
 
     def _provider_configured(self, provider: str) -> bool:
@@ -236,28 +259,22 @@ class InsightEngine:
 
     async def _generate_ai_insights(
         self,
-        metrics: PrivacySafeMetrics | PrivacySafeDailyMetrics,
+        *,
         provider: str,
-        prompt_template: str | None = None,
-        max_insights: int | None = None,
-    ) -> list[InsightResult]:
-        """Generate insights using the configured AI provider.
-
-        Args:
-            metrics: Privacy-safe metrics.
-            provider: AI provider identifier.
-            prompt_template: Optional prompt template override.
-            max_insights: Optional max insights override.
-
-        Returns:
-            List of AI-generated insights.
-        """
-        effective_max = max_insights or self._insight_settings.max_insights
-        effective_template = prompt_template or INSIGHT_PROMPT
-        metrics_text = metrics.to_summary_text()
-        prompt = effective_template.format(
+        metrics_text: str,
+        prompt_template: PromptTemplate,
+        dataset_version: str,
+        request_type: AnalysisRequestType,
+        max_insights: int,
+    ) -> _AIGenerationResult:
+        """Generate insights using the configured AI provider."""
+        profile = get_analysis_profile(request_type)
+        prompt = prompt_template.text.format(
+            analysis_objective=profile.objective,
+            expected_outcome=profile.expected_outcome,
+            dataset_version=dataset_version,
             metrics_text=metrics_text,
-            max_insights=effective_max,
+            max_insights=max_insights,
         )
 
         def do_request():
@@ -271,7 +288,6 @@ class InsightEngine:
                     max_tokens=2048,
                     messages=[{"role": "user", "content": prompt}],
                 )
-
             if provider == "openai":
                 client = OpenAI(
                     api_key=self._openai_settings.api_key,
@@ -283,7 +299,6 @@ class InsightEngine:
                     max_tokens=2048,
                     messages=[{"role": "user", "content": prompt}],
                 )
-
             client = OpenAI(
                 api_key=self._grok_settings.api_key,
                 base_url=self._grok_settings.base_url,
@@ -302,38 +317,57 @@ class InsightEngine:
             )
         except TimeoutError:
             logger.warning("ai_timeout", timeout=self._insight_settings.ai_timeout_seconds)
-            return []
+            return _AIGenerationResult(
+                insights=[],
+                prompt_tokens=None,
+                completion_tokens=None,
+                model=self._model_for_provider(provider),
+                prompt_template=prompt_template,
+                dataset_version=dataset_version,
+            )
 
         if provider == "anthropic":
             response_text = message.content[0].text.strip()
+            usage = getattr(message, "usage", None)
+            prompt_tokens = getattr(usage, "input_tokens", None) if usage else None
+            completion_tokens = getattr(usage, "output_tokens", None) if usage else None
         else:
             response_text = (message.choices[0].message.content or "").strip()
+            usage = getattr(message, "usage", None)
+            prompt_tokens = getattr(usage, "prompt_tokens", None) if usage else None
+            completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
 
-        # Parse JSON response
+        insights = self._parse_insights(response_text, max_insights)
+        return _AIGenerationResult(
+            insights=insights,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            model=self._model_for_provider(provider),
+            prompt_template=prompt_template,
+            dataset_version=dataset_version,
+        )
+
+    def _parse_insights(self, response_text: str, max_insights: int) -> list[InsightResult]:
+        """Parse AI JSON response into structured insights."""
         try:
-            # Handle potential markdown code blocks
             if response_text.startswith("```"):
                 lines = response_text.split("\n")
-                # Remove first and last lines (code block markers)
                 response_text = "\n".join(lines[1:-1])
 
             insights_data = json.loads(response_text)
-
             insights = []
-            for item in insights_data[:effective_max]:
+            for item in insights_data[:max_insights]:
                 insights.append(
                     InsightResult(
                         category=item.get("category", "general"),
                         headline=item.get("headline", "")[:60],
                         reasoning=item.get("reasoning", ""),
                         recommendation=item.get("recommendation", ""),
-                        confidence=1.0,  # AI confidence is 1.0
+                        confidence=1.0,
                         source="ai",
                     )
                 )
-
             return insights
-
         except json.JSONDecodeError as e:
             logger.warning("ai_response_parse_error", error=str(e), response=response_text[:200])
             return []
@@ -343,15 +377,7 @@ class InsightEngine:
         metrics: PrivacySafeMetrics,
         max_insights: int | None = None,
     ) -> list[InsightResult]:
-        """Generate insights using predefined rules.
-
-        Args:
-            metrics: Privacy-safe metrics.
-            max_insights: Optional max insights override.
-
-        Returns:
-            List of rule-based insights.
-        """
+        """Generate insights using predefined rules."""
         return self._rule_engine.evaluate(
             metrics,
             max_insights=max_insights or self._insight_settings.max_insights,
@@ -362,16 +388,85 @@ class InsightEngine:
         metrics: PrivacySafeDailyMetrics,
         max_insights: int | None = None,
     ) -> list[InsightResult]:
-        """Generate daily insights using predefined rules.
-
-        Args:
-            metrics: Privacy-safe daily metrics.
-            max_insights: Optional max insights override.
-
-        Returns:
-            List of rule-based insights.
-        """
+        """Generate daily insights using predefined rules."""
         return self._rule_engine.evaluate_daily(
             metrics,
             max_insights=max_insights or 3,
         )
+
+    def _resolve_prompt_template(
+        self,
+        default_prompt_id: str,
+        prompt_template: str | None,
+    ) -> PromptTemplate:
+        """Resolve default or inline override prompt into a versioned contract object."""
+        if prompt_template is None:
+            return load_prompt_template(default_prompt_id)
+        digest = hashlib.sha256(prompt_template.encode("utf-8")).hexdigest()
+        return PromptTemplate(
+            prompt_id=f"{default_prompt_id}_override",
+            version="inline",
+            path=Path("<inline>"),
+            text=prompt_template,
+            sha256=digest,
+        )
+
+    def _model_for_provider(self, provider: str) -> str:
+        if provider == "anthropic":
+            return self._anthropic_settings.model
+        if provider == "openai":
+            return self._openai_settings.model
+        if provider == "grok":
+            return self._grok_settings.model
+        return "unknown"
+
+    def _estimate_cost_usd(
+        self,
+        *,
+        provider: str,
+        model: str,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+    ) -> float:
+        """Estimate request cost from token usage and static pricing table."""
+        input_tokens = self._token_count(prompt_tokens)
+        output_tokens = self._token_count(completion_tokens)
+        if input_tokens is None and output_tokens is None:
+            return 0.0
+        input_tokens = input_tokens or 0
+        output_tokens = output_tokens or 0
+
+        pricing = None
+        model_lower = model.lower()
+        for model_hint, candidate in _PRICING_USD_PER_MILLION.items():
+            if model_hint in model_lower:
+                pricing = candidate
+                break
+        if pricing is None:
+            pricing = _DEFAULT_PROVIDER_PRICING_USD_PER_MILLION.get(provider, (1.0, 4.0))
+
+        in_rate, out_rate = pricing
+        return (input_tokens / 1_000_000 * in_rate) + (output_tokens / 1_000_000 * out_rate)
+
+    def _evaluate_quality(self, insights: list[InsightResult], max_insights: int) -> float:
+        """Compute a simple quality score for observability dashboards."""
+        if not insights:
+            return 0.0
+        completeness = sum(
+            1
+            for insight in insights
+            if insight.headline and insight.reasoning and insight.recommendation
+        ) / len(insights)
+        confidence = sum(insight.confidence for insight in insights) / len(insights)
+        coverage = min(len(insights), max(max_insights, 1)) / max(max_insights, 1)
+        return (0.5 * completeness) + (0.35 * confidence) + (0.15 * coverage)
+
+    def _token_count(self, value: object) -> int | None:
+        """Return normalized token count or None when unavailable."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return max(value, 0)
+        if isinstance(value, float):
+            return max(int(value), 0)
+        return None

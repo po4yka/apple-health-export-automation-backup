@@ -18,6 +18,7 @@ from ..config import (
     OpenAISettings,
     get_settings,
 )
+from .analysis_contract import AnalysisRequestType
 from .delivery import OpenClawDelivery
 from .formatter import TelegramFormatter
 from .insights import InsightEngine
@@ -662,7 +663,10 @@ async def generate_and_send_report(
             grok_settings=settings.grok,
             insight_settings=settings.insight,
         )
-        insights = await insight_engine.generate(privacy_safe)
+        insights = await insight_engine.generate(
+            privacy_safe,
+            request_type=AnalysisRequestType.WEEKLY_SUMMARY,
+        )
 
         # Format for Telegram
         formatter = TelegramFormatter()
@@ -671,6 +675,7 @@ async def generate_and_send_report(
             insights=insights,
             week_start=start_date,
             week_end=end_date,
+            analysis_provenance=insight_engine.last_provenance,
         )
 
         if stdout:

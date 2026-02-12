@@ -101,3 +101,28 @@ REPORT_DELIVERIES = Counter(
     "Total report delivery attempts",
     ["status"],
 )
+
+# -- Analysis observability (tracked together per run) --
+ANALYSIS_RUNS = Counter(
+    "health_ingest_analysis_runs_total",
+    "Total analysis runs with outcome status",
+    ["request_type", "source", "provider", "status"],
+)
+ANALYSIS_LATENCY_SECONDS = Histogram(
+    "health_ingest_analysis_latency_seconds",
+    "End-to-end analysis latency",
+    ["request_type", "source", "provider"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 45.0, 90.0),
+)
+ANALYSIS_COST_USD = Histogram(
+    "health_ingest_analysis_cost_usd",
+    "Estimated analysis cost in USD",
+    ["request_type", "source", "provider"],
+    buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.25, 0.5),
+)
+ANALYSIS_QUALITY_SCORE = Histogram(
+    "health_ingest_analysis_quality_score",
+    "Heuristic analysis quality score (0-1)",
+    ["request_type", "source", "provider"],
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)

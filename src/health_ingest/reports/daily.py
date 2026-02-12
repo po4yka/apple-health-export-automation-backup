@@ -15,9 +15,10 @@ from ..config import (
     OpenAISettings,
     get_settings,
 )
+from .analysis_contract import AnalysisRequestType
 from .delivery import OpenClawDelivery
 from .formatter import DailyTelegramFormatter
-from .insights import DAILY_EVENING_PROMPT, DAILY_MORNING_PROMPT, InsightEngine
+from .insights import InsightEngine
 from .models import (
     DailyMetrics,
     DeliveryResult,
@@ -103,16 +104,25 @@ class DailyReportGenerator:
             insight_settings=self._insight_settings,
         )
 
-        prompt = DAILY_MORNING_PROMPT if mode == SummaryMode.MORNING else DAILY_EVENING_PROMPT
+        request_type = (
+            AnalysisRequestType.DAILY_MORNING_BRIEF
+            if mode == SummaryMode.MORNING
+            else AnalysisRequestType.DAILY_EVENING_RECAP
+        )
         insights = await engine.generate(
             privacy_safe,
-            prompt_template=prompt,
+            request_type=request_type,
             max_insights_override=3,
         )
 
         # Format for Telegram
         formatter = DailyTelegramFormatter()
-        report = formatter.format(privacy_safe, insights, reference_time)
+        report = formatter.format(
+            privacy_safe,
+            insights,
+            reference_time,
+            analysis_provenance=engine.last_provenance,
+        )
 
         logger.info(
             "daily_summary_generated",

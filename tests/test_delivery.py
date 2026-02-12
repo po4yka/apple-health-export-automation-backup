@@ -40,11 +40,13 @@ Steps: 9,500/day (+12%)
 Sleep: 7.2h avg (stable)
 Exercise: 180 min (+15%)
 
-*Insights*
+*Observations (Facts First)*
 
 1. *Great activity improvement*
    Steps increased 12% from last week.
-   Keep up the momentum!
+
+*Recommendations*
+1. Keep up the momentum!
 
 _RULE-generated insights_"""
 
@@ -276,7 +278,8 @@ class TestTelegramFormatter:
 
         report = formatter.format(sample_metrics, sample_insights, week_start, week_end)
 
-        assert "*Insights*" in report
+        assert "*Observations (Facts First)*" in report
+        assert "*Recommendations*" in report
         assert "Great improvement" in report
         assert "HRV trending" in report
 
@@ -325,6 +328,7 @@ class TestTelegramFormatter:
         report = formatter.format(sample_metrics, [], week_start, week_end)
 
         assert "No significant patterns" in report
+        assert "*Recommendations*" in report
 
     def test_trend_indicator_positive(self, formatter):
         """Test trend indicator for positive change."""

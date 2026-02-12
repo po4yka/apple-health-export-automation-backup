@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from .analysis_contract import AnalysisProvenance
 from .models import InsightResult, PrivacySafeDailyMetrics, PrivacySafeMetrics, SummaryMode
 
 
@@ -9,6 +10,7 @@ class TelegramFormatter:
     """Formats health reports for Telegram delivery."""
 
     MAX_MESSAGE_LENGTH = 4000  # Telegram limit with buffer
+    TEMPLATE_VERSION = "weekly-telegram.v2"
 
     def format(
         self,
@@ -16,6 +18,7 @@ class TelegramFormatter:
         insights: list[InsightResult],
         week_start: datetime,
         week_end: datetime,
+        analysis_provenance: AnalysisProvenance | None = None,
     ) -> str:
         """Format a complete weekly report for Telegram.
 
@@ -39,12 +42,19 @@ class TelegramFormatter:
         # Quick Stats section
         sections.append(self._format_quick_stats(metrics))
 
-        # Insights section
-        sections.append(self._format_insights(insights))
+        # Insights split: facts first, recommendations second
+        sections.append(self._format_observations(insights))
+        sections.append(self._format_recommendations(insights))
 
         # Footer with source indicator
         source = self._get_primary_source(insights)
         sections.append(f"\n_{source.upper()}-generated insights_")
+        if analysis_provenance:
+            sections.append(
+                self._format_provenance_footer(
+                    analysis_provenance.with_template_version(self.TEMPLATE_VERSION)
+                )
+            )
 
         report = "\n\n".join(sections)
 
@@ -92,19 +102,43 @@ class TelegramFormatter:
 
         return "\n".join(lines)
 
-    def _format_insights(self, insights: list[InsightResult]) -> str:
-        """Format the insights section."""
+    def _format_observations(self, insights: list[InsightResult]) -> str:
+        """Format factual observations section."""
         if not insights:
-            return "*Insights*\nNo significant patterns detected this week."
+            return "*Observations (Facts First)*\nNo significant patterns detected this week."
 
-        lines = ["*Insights*"]
+        lines = ["*Observations (Facts First)*"]
 
         for i, insight in enumerate(insights[:4], 1):  # Limit to 4 for readability
             lines.append(f"\n{i}. *{insight.headline}*")
             lines.append(f"   {insight.reasoning}")
-            lines.append(f"   {insight.recommendation}")
 
         return "\n".join(lines)
+
+    def _format_recommendations(self, insights: list[InsightResult]) -> str:
+        """Format recommendation section."""
+        if not insights:
+            return "*Recommendations*\n- Keep your current healthy routines this week."
+
+        lines = ["*Recommendations*"]
+        for i, insight in enumerate(insights[:4], 1):
+            lines.append(f"{i}. {insight.recommendation}")
+        return "\n".join(lines)
+
+    def _format_provenance_footer(self, provenance: AnalysisProvenance) -> str:
+        """Format compact version trace to explain output changes."""
+        dataset_version = provenance.dataset_version.replace("sha256:", "")
+        prompt_ref = (
+            f"{provenance.prompt_id}@{provenance.prompt_version}:{provenance.prompt_hash[:12]}"
+        )
+        return (
+            "_trace: "
+            f"req={provenance.request_type} "
+            f"ds={dataset_version[:12]} "
+            f"prompt={prompt_ref} "
+            f"model={provenance.model} "
+            f"tpl={provenance.report_template_version}_"
+        )
 
     def _trend_indicator(self, change_pct: float | None) -> str:
         """Return a trend indicator string."""
@@ -158,12 +192,14 @@ class DailyTelegramFormatter:
     """Formats daily health summaries for Telegram delivery."""
 
     MAX_MESSAGE_LENGTH = 4000
+    TEMPLATE_VERSION = "daily-telegram.v2"
 
     def format(
         self,
         metrics: PrivacySafeDailyMetrics,
         insights: list[InsightResult],
         reference_time: datetime,
+        analysis_provenance: AnalysisProvenance | None = None,
     ) -> str:
         """Format a daily summary for Telegram.
 
@@ -182,12 +218,19 @@ class DailyTelegramFormatter:
         else:
             sections.append(self._format_evening(metrics, reference_time))
 
-        # Insights section
-        sections.append(self._format_insights(insights))
+        # Insights split: facts first, recommendations second
+        sections.append(self._format_observations(insights))
+        sections.append(self._format_recommendations(insights))
 
         # Footer
         source = _get_primary_source(insights)
         sections.append(f"_{source.upper()}-generated insights_")
+        if analysis_provenance:
+            sections.append(
+                self._format_provenance_footer(
+                    analysis_provenance.with_template_version(self.TEMPLATE_VERSION)
+                )
+            )
 
         report = "\n\n".join(sections)
 
@@ -286,13 +329,37 @@ class DailyTelegramFormatter:
 
         return "\n".join(lines)
 
-    def _format_insights(self, insights: list[InsightResult]) -> str:
-        """Format the insights section — compact format for daily."""
+    def _format_observations(self, insights: list[InsightResult]) -> str:
+        """Format factual observations section for daily report."""
         if not insights:
-            return "*Tips*\nNo specific insights for today."
+            return "*What Stood Out*\nNo specific patterns stood out today."
 
-        lines = ["*Tips*"]
+        lines = ["*What Stood Out*"]
         for insight in insights[:3]:
-            lines.append(f"- *{insight.headline}*: {insight.recommendation}")
-
+            lines.append(f"- *{insight.headline}*: {insight.reasoning}")
         return "\n".join(lines)
+
+    def _format_recommendations(self, insights: list[InsightResult]) -> str:
+        """Format recommendation section for daily report."""
+        if not insights:
+            return "*Recommended Actions*\n- Keep consistent hydration, movement, and sleep timing."
+
+        lines = ["*Recommended Actions*"]
+        for insight in insights[:3]:
+            lines.append(f"- {insight.recommendation}")
+        return "\n".join(lines)
+
+    def _format_provenance_footer(self, provenance: AnalysisProvenance) -> str:
+        """Format compact version trace to explain output changes."""
+        dataset_version = provenance.dataset_version.replace("sha256:", "")
+        prompt_ref = (
+            f"{provenance.prompt_id}@{provenance.prompt_version}:{provenance.prompt_hash[:12]}"
+        )
+        return (
+            "_trace: "
+            f"req={provenance.request_type} "
+            f"ds={dataset_version[:12]} "
+            f"prompt={prompt_ref} "
+            f"model={provenance.model} "
+            f"tpl={provenance.report_template_version}_"
+        )

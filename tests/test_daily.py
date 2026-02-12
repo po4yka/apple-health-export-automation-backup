@@ -191,14 +191,15 @@ class TestDailyTelegramFormatter:
     def test_format_includes_insights(self, morning_metrics, sample_insights, reference_time):
         formatter = DailyTelegramFormatter()
         report = formatter.format(morning_metrics, sample_insights, reference_time)
-        assert "*Tips*" in report
+        assert "*What Stood Out*" in report
+        assert "*Recommended Actions*" in report
         assert "Good sleep quality" in report
 
     def test_format_no_insights(self, morning_metrics, reference_time):
         formatter = DailyTelegramFormatter()
         report = formatter.format(morning_metrics, [], reference_time)
-        assert "*Tips*" in report
-        assert "No specific insights" in report
+        assert "*What Stood Out*" in report
+        assert "No specific patterns stood out today" in report
 
     def test_format_includes_footer(self, morning_metrics, sample_insights, reference_time):
         formatter = DailyTelegramFormatter()
