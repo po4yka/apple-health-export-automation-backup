@@ -13,12 +13,14 @@ from .models import (
     SummaryMode,
 )
 from .rules import RuleEngine
+from .visualization import DailyInfographicRenderer, WeeklyInfographicRenderer
 from .weekly import WeeklyReportGenerator
 
 __all__ = [
     "DailyMetrics",
     "DailyReportGenerator",
     "DailyTelegramFormatter",
+    "DailyInfographicRenderer",
     "DeliveryResult",
     "InsightEngine",
     "InsightResult",
@@ -28,5 +30,6 @@ __all__ = [
     "RuleEngine",
     "SummaryMode",
     "TelegramFormatter",
+    "WeeklyInfographicRenderer",
     "WeeklyReportGenerator",
 ]

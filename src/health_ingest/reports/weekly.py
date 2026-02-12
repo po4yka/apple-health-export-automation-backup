@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import anthropic
 import openai
@@ -23,6 +24,7 @@ from .delivery import OpenClawDelivery
 from .formatter import TelegramFormatter
 from .insights import InsightEngine
 from .models import DeliveryResult, PrivacySafeMetrics
+from .visualization import WeeklyInfographicRenderer
 
 logger = structlog.get_logger(__name__)
 
@@ -611,12 +613,14 @@ def convert_to_privacy_safe(
 async def generate_and_send_report(
     dry_run: bool = False,
     stdout: bool = False,
+    infographic_out: str | None = None,
 ) -> DeliveryResult | None:
     """Generate weekly report with insights and optionally send via Telegram.
 
     Args:
         dry_run: If True, generate but don't send.
         stdout: If True, print report to stdout.
+        infographic_out: Optional path for exporting a weekly SVG infographic.
 
     Returns:
         DeliveryResult if sent, None if dry_run or delivery disabled.
@@ -677,12 +681,25 @@ async def generate_and_send_report(
             week_end=end_date,
             analysis_provenance=insight_engine.last_provenance,
         )
+        if infographic_out:
+            renderer = WeeklyInfographicRenderer()
+            svg = renderer.render(
+                metrics=privacy_safe,
+                insights=insights,
+                week_start=start_date,
+                week_end=end_date,
+                analysis_provenance=insight_engine.last_provenance,
+            )
+            output_path = renderer.write_svg(svg, infographic_out)
+            logger.info("weekly_infographic_exported", path=str(output_path))
 
         if stdout:
             print(report)
             print("\n" + "=" * 50)
             print(f"Report length: {len(report)} characters")
             print(f"Insights source: {insights[0].source if insights else 'none'}")
+            if infographic_out:
+                print(f"Infographic: {Path(infographic_out).resolve()}")
 
         if dry_run:
             logger.info(
@@ -767,6 +784,12 @@ def run_report_and_send() -> None:
         action="store_true",
         help="Print report to stdout",
     )
+    parser.add_argument(
+        "--infographic-out",
+        type=str,
+        default=None,
+        help="Optional output path for weekly infographic SVG",
+    )
 
     args = parser.parse_args()
 
@@ -780,6 +803,7 @@ def run_report_and_send() -> None:
         generate_and_send_report(
             dry_run=args.dry_run,
             stdout=args.stdout,
+            infographic_out=args.infographic_out,
         )
     )
 

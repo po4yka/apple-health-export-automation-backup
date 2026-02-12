@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
 import structlog
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
@@ -15,16 +16,18 @@ from ..config import (
     OpenAISettings,
     get_settings,
 )
-from .analysis_contract import AnalysisRequestType
+from .analysis_contract import AnalysisProvenance, AnalysisRequestType
 from .delivery import OpenClawDelivery
 from .formatter import DailyTelegramFormatter
 from .insights import InsightEngine
 from .models import (
     DailyMetrics,
     DeliveryResult,
+    InsightResult,
     PrivacySafeDailyMetrics,
     SummaryMode,
 )
+from .visualization import DailyInfographicRenderer
 
 logger = structlog.get_logger(__name__)
 
@@ -53,6 +56,30 @@ class DailyReportGenerator:
             ai_timeout_seconds=ai_timeout_seconds,
         )
         self._influx_client: InfluxDBClientAsync | None = None
+        self._last_metrics: PrivacySafeDailyMetrics | None = None
+        self._last_insights: list[InsightResult] = []
+        self._last_reference_time: datetime | None = None
+        self._last_analysis_provenance: AnalysisProvenance | None = None
+
+    @property
+    def last_metrics(self) -> PrivacySafeDailyMetrics | None:
+        """Most recent privacy-safe metrics used for report generation."""
+        return self._last_metrics
+
+    @property
+    def last_insights(self) -> list[InsightResult]:
+        """Most recent insights used for report generation."""
+        return self._last_insights
+
+    @property
+    def last_reference_time(self) -> datetime | None:
+        """Most recent reference time used for report generation."""
+        return self._last_reference_time
+
+    @property
+    def last_analysis_provenance(self) -> AnalysisProvenance | None:
+        """Most recent analysis provenance metadata."""
+        return self._last_analysis_provenance
 
     async def connect(self) -> None:
         """Connect to InfluxDB."""
@@ -130,6 +157,10 @@ class DailyReportGenerator:
             report_length=len(report),
             insight_count=len(insights),
         )
+        self._last_metrics = privacy_safe
+        self._last_insights = list(insights)
+        self._last_reference_time = reference_time
+        self._last_analysis_provenance = engine.last_provenance
 
         return report
 
@@ -515,6 +546,7 @@ async def generate_and_send_daily(
     mode: SummaryMode,
     dry_run: bool = False,
     stdout: bool = False,
+    infographic_out: str | None = None,
 ) -> DeliveryResult | None:
     """Full pipeline: generate -> format -> deliver.
 
@@ -522,6 +554,7 @@ async def generate_and_send_daily(
         mode: Morning or evening summary mode.
         dry_run: If True, generate but don't send.
         stdout: If True, print report to stdout.
+        infographic_out: Optional path for exporting a daily SVG infographic.
 
     Returns:
         DeliveryResult if sent, None if dry_run or delivery disabled.
@@ -543,11 +576,27 @@ async def generate_and_send_daily(
     try:
         reference_time = datetime.now(TZ_TBILISI)
         report = await generator.generate_summary(mode, reference_time)
+        if infographic_out and generator.last_metrics is not None:
+            renderer = DailyInfographicRenderer()
+            svg = renderer.render(
+                metrics=generator.last_metrics,
+                insights=generator.last_insights,
+                reference_time=generator.last_reference_time or reference_time,
+                analysis_provenance=generator.last_analysis_provenance,
+            )
+            output_path = renderer.write_svg(svg, infographic_out)
+            logger.info(
+                "daily_infographic_exported",
+                mode=mode.value,
+                path=str(output_path),
+            )
 
         if stdout:
             print(report)
             print("\n" + "=" * 50)
             print(f"Report length: {len(report)} characters")
+            if infographic_out:
+                print(f"Infographic: {Path(infographic_out).resolve()}")
 
         if dry_run:
             logger.info("daily_dry_run_complete", mode=mode.value, report_length=len(report))
@@ -595,6 +644,12 @@ def run_daily_report() -> None:
         choices=["morning", "evening"],
         help="Summary mode: morning or evening",
     )
+    parser.add_argument(
+        "--infographic-out",
+        type=str,
+        default=None,
+        help="Optional output path for daily infographic SVG",
+    )
 
     args = parser.parse_args()
     mode = SummaryMode(args.mode)
@@ -614,7 +669,18 @@ def run_daily_report() -> None:
         await generator.connect()
         try:
             report = await generator.generate_summary(mode)
+            if args.infographic_out and generator.last_metrics is not None:
+                renderer = DailyInfographicRenderer()
+                svg = renderer.render(
+                    metrics=generator.last_metrics,
+                    insights=generator.last_insights,
+                    reference_time=generator.last_reference_time or datetime.now(TZ_TBILISI),
+                    analysis_provenance=generator.last_analysis_provenance,
+                )
+                renderer.write_svg(svg, args.infographic_out)
             print(report)
+            if args.infographic_out:
+                print(f"\nInfographic: {Path(args.infographic_out).resolve()}")
         finally:
             await generator.disconnect()
 
@@ -641,6 +707,12 @@ def run_daily_report_and_send() -> None:
         action="store_true",
         help="Print report to stdout",
     )
+    parser.add_argument(
+        "--infographic-out",
+        type=str,
+        default=None,
+        help="Optional output path for daily infographic SVG",
+    )
 
     args = parser.parse_args()
     mode = SummaryMode(args.mode)
@@ -655,6 +727,7 @@ def run_daily_report_and_send() -> None:
             mode=mode,
             dry_run=args.dry_run,
             stdout=args.stdout,
+            infographic_out=args.infographic_out,
         )
     )
 

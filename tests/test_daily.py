@@ -482,3 +482,34 @@ class TestDailyReportGenerator:
         assert result.hrv_vs_7d_avg is not None
         assert len(result.workout_summaries) == 1
         assert "Running" in result.workout_summaries[0]
+
+    async def test_generate_summary_stores_last_render_context(self):
+        """Ensure daily generator keeps context for infographic export."""
+        from health_ingest.reports.daily import DailyReportGenerator
+
+        influx_settings = MagicMock()
+        influx_settings.url = "http://localhost:8086"
+        influx_settings.token = "test-token"
+        influx_settings.org = "test-org"
+        influx_settings.bucket = "test-bucket"
+
+        generator = DailyReportGenerator(
+            influxdb_settings=influx_settings,
+            anthropic_settings=MagicMock(api_key=None),
+            openai_settings=MagicMock(api_key=None),
+            grok_settings=MagicMock(api_key=None),
+            ai_provider="anthropic",
+        )
+
+        mock_query_api = MagicMock()
+        mock_query_api.query = AsyncMock(return_value=[])
+        mock_client = MagicMock()
+        mock_client.query_api.return_value = mock_query_api
+        generator._influx_client = mock_client
+
+        ref_time = datetime(2025, 1, 15, 9, 0, 0, tzinfo=TZ_TBILISI)
+        await generator.generate_summary(SummaryMode.MORNING, ref_time)
+
+        assert generator.last_metrics is not None
+        assert isinstance(generator.last_insights, list)
+        assert generator.last_reference_time == ref_time
