@@ -121,7 +121,7 @@ services:
   # Stores all health metrics with infinite retention by default.
   # Web UI available at http://localhost:8087
   influxdb:
-    image: influxdb:2.7
+    image: influxdb:2.8
     container_name: health-influxdb
     ports:
       - "127.0.0.1:8087:8086"  # Mapped to 8087 to avoid conflicts with other services
