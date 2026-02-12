@@ -909,6 +909,42 @@ class HTTPHandler:
             HTTP_REQUESTS_TOTAL.labels(method="POST", path="/bot/command", status="200").inc()
             return BotCommandResponse(text=text)
 
+        @app.get(
+            "/bot/context",
+            response_model=dict[str, Any],
+            responses={
+                401: {"model": ErrorResponse},
+                500: {"model": ErrorResponse},
+                503: {"model": ErrorResponse},
+            },
+            summary="Compact health context for LLM injection",
+        )
+        async def bot_context(
+            request: Request,
+        ):
+            """Handle GET /bot/context -- return compact health snapshot for LLM context."""
+            if not self._check_bot_auth(request):
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/bot/context", status="401").inc()
+                return error_response(status.HTTP_401_UNAUTHORIZED, "Unauthorized")
+            if not self._bot_dispatcher:
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/bot/context", status="503").inc()
+                return error_response(status.HTTP_503_SERVICE_UNAVAILABLE, "Bot unavailable")
+
+            try:
+                ctx = await self._bot_dispatcher.fetch_context_snapshot()
+            except Exception as exc:
+                logger.error("bot_context_error", error=str(exc))
+                HTTP_REQUESTS_TOTAL.labels(method="GET", path="/bot/context", status="500").inc()
+                return error_response(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR, "Context fetch failed"
+                )
+
+            HTTP_REQUESTS_TOTAL.labels(method="GET", path="/bot/context", status="200").inc()
+            return {
+                "context": ctx,
+                "timestamp": datetime.now().isoformat(),
+            }
+
         return app
 
     async def start(self) -> None:

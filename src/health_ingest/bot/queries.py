@@ -222,6 +222,30 @@ class BotQueryService:
 
         return data
 
+    async def fetch_context_snapshot(self) -> dict[str, float | int | None]:
+        """Fetch compact context data for LLM injection.
+
+        Runs snapshot + sleep queries in parallel and returns a flat dict
+        optimized for minimal token usage.
+        """
+        snapshot, sleep = await asyncio.gather(
+            self.fetch_snapshot(),
+            self.fetch_sleep(),
+        )
+
+        ctx: dict[str, float | int | None] = {
+            "steps": snapshot.steps if snapshot.steps else None,
+            "active_calories": snapshot.active_calories if snapshot.active_calories else None,
+            "exercise_min": snapshot.exercise_min if snapshot.exercise_min else None,
+            "resting_hr": round(snapshot.resting_hr, 1) if snapshot.resting_hr is not None else None,
+            "hrv_ms": round(snapshot.hrv_ms, 1) if snapshot.hrv_ms is not None else None,
+            "weight_kg": round(snapshot.weight_kg, 1) if snapshot.weight_kg is not None else None,
+            "sleep_hours": round(sleep.duration_min / 60, 1) if sleep.duration_min is not None else None,
+            "sleep_quality": round(sleep.quality_score, 1) if sleep.quality_score is not None else None,
+        }
+
+        return ctx
+
     async def fetch_heart(self) -> HeartData:
         """Fetch heart data for /health_heart command."""
         data = HeartData()
